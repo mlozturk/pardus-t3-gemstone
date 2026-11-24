@@ -1,0 +1,86 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tomi Valkeinen <tomi.valkeinen@ideasonboard.com>
+Date: Thu, 28 May 2026 15:53:43 +0300
+Subject: [PATCH 02/20] arm64: dts: ti: k3-am62*: Rename 'clock-controller' to
+ 'clock'
+
+Multiple dtsi files have clock nodes with 'clock-controller' names.
+Rename them to 'clock' to be more in line with the fact that it's just a
+single clock.
+
+Signed-off-by: Tomi Valkeinen <tomi.valkeinen@ideasonboard.com>
+---
+ arch/arm64/boot/dts/ti/k3-am62-main.dtsi  | 4 ++--
+ arch/arm64/boot/dts/ti/k3-am62a-main.dtsi | 4 ++--
+ arch/arm64/boot/dts/ti/k3-am62p-main.dtsi | 4 ++--
+ 3 files changed, 6 insertions(+), 6 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/ti/k3-am62-main.dtsi b/arch/arm64/boot/dts/ti/k3-am62-main.dtsi
+index 40fb3c9e6..f59863a13 100644
+--- a/arch/arm64/boot/dts/ti/k3-am62-main.dtsi
++++ b/arch/arm64/boot/dts/ti/k3-am62-main.dtsi
+@@ -59,7 +59,7 @@ epwm_tbclk: clock-controller@4130 {
+ 			#clock-cells = <1>;
+ 		};
+ 
+-		audio_refclk0: clock-controller@82e0 {
++		audio_refclk0: clock@82e0 {
+ 			compatible = "ti,am62-audio-refclk";
+ 			reg = <0x82e0 0x4>;
+ 			clocks = <&k3_clks 157 0>;
+@@ -68,7 +68,7 @@ audio_refclk0: clock-controller@82e0 {
+ 			#clock-cells = <0>;
+ 		};
+ 
+-		audio_refclk1: clock-controller@82e4 {
++		audio_refclk1: clock@82e4 {
+ 			compatible = "ti,am62-audio-refclk";
+ 			reg = <0x82e4 0x4>;
+ 			clocks = <&k3_clks 157 10>;
+diff --git a/arch/arm64/boot/dts/ti/k3-am62a-main.dtsi b/arch/arm64/boot/dts/ti/k3-am62a-main.dtsi
+index 829f00ade..cbb859024 100644
+--- a/arch/arm64/boot/dts/ti/k3-am62a-main.dtsi
++++ b/arch/arm64/boot/dts/ti/k3-am62a-main.dtsi
+@@ -60,7 +60,7 @@ epwm_tbclk: clock-controller@4130 {
+ 			#clock-cells = <1>;
+ 		};
+ 
+-		audio_refclk0: clock-controller@82e0 {
++		audio_refclk0: clock@82e0 {
+ 			compatible = "ti,am62-audio-refclk";
+ 			reg = <0x82e0 0x4>;
+ 			clocks = <&k3_clks 157 0>;
+@@ -69,7 +69,7 @@ audio_refclk0: clock-controller@82e0 {
+ 			#clock-cells = <0>;
+ 		};
+ 
+-		audio_refclk1: clock-controller@82e4 {
++		audio_refclk1: clock@82e4 {
+ 			compatible = "ti,am62-audio-refclk";
+ 			reg = <0x82e4 0x4>;
+ 			clocks = <&k3_clks 157 10>;
+diff --git a/arch/arm64/boot/dts/ti/k3-am62p-main.dtsi b/arch/arm64/boot/dts/ti/k3-am62p-main.dtsi
+index 908cc0760..870b9a7cf 100644
+--- a/arch/arm64/boot/dts/ti/k3-am62p-main.dtsi
++++ b/arch/arm64/boot/dts/ti/k3-am62p-main.dtsi
+@@ -43,7 +43,7 @@ &inta_main_dmss {
+ };
+ 
+ &main_conf {
+-	audio_refclk0: clock-controller@82e0 {
++	audio_refclk0: clock@82e0 {
+ 		compatible = "ti,am62-audio-refclk";
+ 		reg = <0x82e0 0x4>;
+ 		clocks = <&k3_clks 157 0>;
+@@ -52,7 +52,7 @@ audio_refclk0: clock-controller@82e0 {
+ 		#clock-cells = <0>;
+ 	};
+ 
+-	audio_refclk1: clock-controller@82e4 {
++	audio_refclk1: clock@82e4 {
+ 		compatible = "ti,am62-audio-refclk";
+ 		reg = <0x82e4 0x4>;
+ 		clocks = <&k3_clks 157 18>;
+-- 
+2.34.1
+

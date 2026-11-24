@@ -1,0 +1,6 @@
+#!/bin/bash
+# Short cut for the Pardus 25 image step alone (03), with a log.  Prefer ./build.sh (all steps).
+# Usage: sudo ./go-pardus [--flavor full|lite|minimal] [--kernel t3|debian|mainline] [--xz N] ...
+# Without options the marker files are read (echo minimal > .flavor, echo mainline > .kernel,
+# .vendor-bl / .vendor-initrd); without those: lite + Debian kernel.
+cd "$(dirname "$0")" && ./scripts/03-rootfs-image.sh --distro pardus "$@" 2>&1 | tee out-pardus.log

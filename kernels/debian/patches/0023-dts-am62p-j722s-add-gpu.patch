@@ -1,0 +1,42 @@
+From 41c51747212a43c848ce42e8bcedc30e2393634d Mon Sep 17 00:00:00 2001
+From: Michael Walle <mwalle@kernel.org>
+Date: Mon, 31 Aug 2026 13:09:53 -0500
+Subject: [PATCH 1/2] arm64: dts: ti: am62p/j722s: Add GPU node
+
+Add BXS-4 GPU node for J722s/AM62P.
+
+Signed-off-by: Michael Walle <mwalle@kernel.org>
+Signed-off-by: Antonios Christidis <a-christidis@ti.com>
+Reviewed-by: Bryan Brattlof <bb@ti.com>
+Reviewed-by: Udit Kumar <u-kumar1@ti.com>
+Link: https://patch.msgid.link/20260831-am62p-gpu-node-v2-1-69945a2db2af@ti.com
+Signed-off-by: Nishanth Menon <nm@ti.com>
+---
+ .../arm64/boot/dts/ti/k3-am62p-j722s-common-main.dtsi | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/arch/arm64/boot/dts/ti/k3-am62p-j722s-common-main.dtsi b/arch/arm64/boot/dts/ti/k3-am62p-j722s-common-main.dtsi
+index 8b65c6efc..d1d76c9b9 100644
+--- a/arch/arm64/boot/dts/ti/k3-am62p-j722s-common-main.dtsi
++++ b/arch/arm64/boot/dts/ti/k3-am62p-j722s-common-main.dtsi
+@@ -1223,6 +1223,17 @@ dsi0: dsi@30500000 {
+ 		status = "disabled";
+ 	};
+ 
++	gpu: gpu@fd80000 {
++		compatible = "ti,am62p-gpu", "img,img-bxs-4-64", "img,img-rogue";
++		reg = <0x00 0x0fd80000 0x00 0x80000>;
++		clocks = <&k3_clks 237 3>;
++		clock-names = "core";
++		interrupts = <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>;
++		power-domains = <&k3_pds 237 TI_SCI_PD_EXCLUSIVE>,
++				<&k3_pds 242 TI_SCI_PD_EXCLUSIVE>;
++		power-domain-names = "a", "b";
++	};
++
+ 	vpu: video-codec@30210000 {
+ 		compatible = "ti,j721s2-wave521c", "cnm,wave521c";
+ 		reg = <0x00 0x30210000 0x00 0x10000>;
+-- 
+2.34.1
+

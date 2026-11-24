@@ -1,0 +1,48 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tomi Valkeinen <tomi.valkeinen@ideasonboard.com>
+Date: Thu, 28 May 2026 15:53:45 +0300
+Subject: [PATCH 03/20] dt-bindings: soc: ti: ti,j721e-system-controller: Relax
+ the bindings
+
+The ti,j721e-system-controller binding specifies a specific schema for
+each child node. For example, any clock node under the system controller
+node must be a ti,am654-serdes-ctrl.
+
+To be able to use the same system-controller binding for more SoCs,
+relax the bindings by making both clock-controller and clock accept any
+kind of child node.
+
+Signed-off-by: Tomi Valkeinen <tomi.valkeinen@ideasonboard.com>
+---
+ .../bindings/soc/ti/ti,j721e-system-controller.yaml         | 6 ++----
+ 1 file changed, 2 insertions(+), 4 deletions(-)
+
+diff --git a/Documentation/devicetree/bindings/soc/ti/ti,j721e-system-controller.yaml b/Documentation/devicetree/bindings/soc/ti/ti,j721e-system-controller.yaml
+index f3bd0be3b..56712ebdd 100644
+--- a/Documentation/devicetree/bindings/soc/ti/ti,j721e-system-controller.yaml
++++ b/Documentation/devicetree/bindings/soc/ti/ti,j721e-system-controller.yaml
+@@ -53,9 +53,8 @@ patternProperties:
+ 
+   "^clock-controller@[0-9a-f]+$":
+     type: object
+-    $ref: /schemas/clock/ti,am654-ehrpwm-tbclk.yaml#
+     description:
+-      Clock provider for TI EHRPWM nodes.
++      A clock controller with registers in the Control Module.
+ 
+   "phy@[0-9a-f]+$":
+     type: object
+@@ -76,9 +75,8 @@ patternProperties:
+ 
+   "^clock@[0-9a-f]+$":
+     type: object
+-    $ref: /schemas/soc/ti/ti,am654-serdes-ctrl.yaml#
+     description:
+-      This is the Serdes Control region.
++      A clock with registers in the Control Module.
+ 
+   "^dss-oldi-io-ctrl@[0-9a-f]+$":
+     type: object
+-- 
+2.34.1
+

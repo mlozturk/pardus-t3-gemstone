@@ -1,0 +1,168 @@
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
+/*
+ * T3 Gemstone O1: display subsystem (DSS1 DPI) -> SiI9022 HDMI bridge -> HDMI connector, HDMI audio
+ * (McASP1). Needs the AM62P/J722S display support that is not in mainline yet (Tomi Valkeinen's
+ * tidss series, kernels/debian/patches 0001-0022). Used by k3-am67a-t3-gem-o1.dts only.
+ */
+
+/ {
+	hdmi0: connector-hdmi {
+		compatible = "hdmi-connector";
+		label = "hdmi";
+		type = "a";
+		port {
+			hdmi_connector_in: endpoint {
+				remote-endpoint = <&sii9022_out>;
+			};
+		};
+	};
+
+	sound0: sound {
+		compatible = "simple-audio-card";
+		simple-audio-card,name = "sii9022 HDMI";
+		/* HDMI is output only: McASP has no RX serializer, so capture probing just fails */
+		playback-only;
+		simple-audio-card,format = "i2s";
+		simple-audio-card,bitclock-master = <&hdmi_dailink_master>;
+		simple-audio-card,frame-master = <&hdmi_dailink_master>;
+
+		/*
+		 * playback-only also on the cpu and codec nodes: up to 6.18 the parser reads it from the
+		 * card, cpu and codec nodes in turn and each read overwrites the previous one, so a card-level
+		 * flag alone ends up false (fixed in 7.x). Without it the sound server keeps trying to
+		 * capture: "stream has more channels (2) than are enabled in mcasp (0)", ASoC error -22.
+		 */
+		hdmi_dailink_master: simple-audio-card,cpu {
+			sound-dai = <&mcasp1>;
+			playback-only;
+			system-clock-direction-out;
+			/*
+			 * The real McASP1 AUXCLK (k3_clks 191, parent 2): a fixed 96 MHz. The McASP
+			 * driver then computes the true error of each sample rate and offers only those
+			 * it can make exactly: 44.1 kHz and its multiples (48 kHz would be 0.8% off).
+			 * PipeWire opens 44.1 kHz and resamples. See the note at &mcasp1.
+			 */
+			system-clock-frequency = <96000000>;
+		};
+
+		simple-audio-card,codec {
+			sound-dai = <&sii9022>;
+			playback-only;
+		};
+	};
+};
+
+&main_i2c1 {
+	sii9022: bridge-hdmi@3b {
+		compatible = "sil,sii9022";
+		reg = <0x3b>;
+
+		pinctrl-names = "default";
+		pinctrl-0 = <&hdmi_gpio_pins_default>;
+
+		reset-gpios = <&mcu_gpio0 11 GPIO_ACTIVE_LOW>;
+
+		iovcc-supply = <&vdd_3v3>;
+		cvcc12-supply = <&ldo2_reg>;
+
+		interrupt-parent = <&mcu_gpio0>;
+		interrupts = <14 IRQ_TYPE_EDGE_FALLING>;
+
+		#sound-dai-cells = <0>;
+		sil,i2s-data-lanes = < 0 >;
+
+		hdmi_tx_ports: ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			/*
+			 * HDMI can be serviced with 3 potential VPs -
+			 * (DSS0 VP1 / DSS1 VP0 / DSS1 VP1).
+			 * For now, we will service it with DSS0 VP1.
+			 */
+			port@0 {
+				reg = <0>;
+				sii9022_in: endpoint {
+					remote-endpoint = <&dss1_dpi0_out>;
+				};
+			};
+
+			port@1 {
+				reg = <1>;
+
+				sii9022_out: endpoint {
+					remote-endpoint = <&hdmi_connector_in>;
+				};
+			};
+		};
+	};
+};
+
+&dphy_tx0 {
+	status = "okay";
+};
+
+&dsi0 {
+	status = "disabled";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	bridge@0 {
+		status = "disabled";
+	};
+};
+
+&dss1 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&main_dpi_pins_default>;
+
+	clocks = <&k3_clks 232 8>,
+		 <&k3_clks 232 0>,
+		 <&k3_clks 232 4>;
+
+	assigned-clocks = <&k3_clks 241 0>, /* DSS1-VP0 */
+			  <&k3_clks 240 0>, /* DSS1-VP1 */
+			  <&k3_clks 245 0>; /* DPI Output */
+
+	assigned-clock-parents = <&k3_clks 241 2>,	/* PLL 17 HDMI */
+				 <&k3_clks 240 1>,	/* PLL 18 DSI */
+				 <&k3_clks 245 2>;	/* DSS1-DPI0 */
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* DSS1-VP1: DPI/HDMI Output */
+		port@0 {
+			reg = <0>;
+
+			dss1_dpi0_out: endpoint {
+				remote-endpoint = <&sii9022_in>;
+			};
+		};
+	};
+};
+
+&mcasp1 {
+	status = "okay";
+	#sound-dai-cells = <0>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&main_mcasp1_pins_default>;
+	/*
+	 * No "auxclk-fs-ratio = <2177>" (T3's and BeagleY-AI's setting): it tells the driver that
+	 * AUXCLK = 2177 x sample rate, which is true only at 44.1 kHz (96 MHz / 2177). At 48 kHz, the
+	 * PipeWire default, the driver then assumed 104.5 MHz, chose the wrong divider and the sound
+	 * played ~8% slow and low. The real frequency is given on the sound card's cpu node instead.
+	 */
+	op-mode = <0>;			/* MCASP_IIS_MODE */
+	tdm-slots = <2>;
+	serial-dir = <	/* 0: INACTIVE, 1: TX, 2: RX */
+		   1 0 0 0
+		   0 0 0 0
+		   0 0 0 0
+		   0 0 0 0
+	>;
+	tx-num-evt = <32>;
+	rx-num-evt = <32>;
+};

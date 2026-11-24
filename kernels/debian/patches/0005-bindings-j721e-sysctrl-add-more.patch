@@ -1,0 +1,41 @@
+From 826f37d29a525dcfa08c3dfb18ce3689f58e9200 Mon Sep 17 00:00:00 2001
+From: Tomi Valkeinen <tomi.valkeinen@ideasonboard.com>
+Date: Thu, 28 May 2026 15:53:46 +0300
+Subject: [PATCH 05/25] dt-bindings: soc: ti: ti,j721e-system-controller: Add
+ more compatibles
+
+Add the following to the list of accepted compatibles so that we can use
+the same binding on these SoCs too:
+
+ti,am62-system-controller
+ti,am62a-system-controller
+ti,am62p-system-controller
+ti,j784s4-system-controller
+
+Signed-off-by: Tomi Valkeinen <tomi.valkeinen@ideasonboard.com>
+---
+ .../bindings/soc/ti/ti,j721e-system-controller.yaml           | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/Documentation/devicetree/bindings/soc/ti/ti,j721e-system-controller.yaml b/Documentation/devicetree/bindings/soc/ti/ti,j721e-system-controller.yaml
+index 56712ebdd..11365cb9f 100644
+--- a/Documentation/devicetree/bindings/soc/ti/ti,j721e-system-controller.yaml
++++ b/Documentation/devicetree/bindings/soc/ti/ti,j721e-system-controller.yaml
+@@ -26,10 +26,14 @@ properties:
+   compatible:
+     items:
+       - enum:
++          - ti,am62-system-controller
++          - ti,am62a-system-controller
++          - ti,am62p-system-controller
+           - ti,am654-system-controller
+           - ti,j7200-system-controller
+           - ti,j721e-system-controller
+           - ti,j721s2-system-controller
++          - ti,j784s4-system-controller
+       - const: syscon
+       - const: simple-mfd
+ 
+-- 
+2.34.1
+

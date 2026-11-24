@@ -1,0 +1,11 @@
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
+/*
+ * T3 Gemstone O1 without display: mainline kernel, no patches (docs/BELGE.md Â§24). The display
+ * subsystem of this SoC is not supported by mainline yet, so DSS, SiI9022 HDMI and HDMI audio are left out.
+ * Built as k3-am67a-t3-gem-o1.dtb (the name U-Boot loads).
+ */
+
+/dts-v1/;
+
+#include "k3-am67a-t3-gem-o1-common.dtsi"
+#include "k3-am67a-t3-gem-o1-gpu-v7.4.dtsi"

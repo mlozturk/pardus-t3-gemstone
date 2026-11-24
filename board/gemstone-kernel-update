@@ -1,0 +1,83 @@
+#!/bin/sh
+# T3 Gemstone O1: install a kernel package and refresh the BOOT partition (U-Boot reads it from there).
+# Usage (as root):
+#   gemstone-kernel-update            install newest linux-image-*.deb (+ optional DTB) from ~pardus/gemstone-update/
+#   gemstone-kernel-update --restore  put the previous kernel/initramfs/DTB back on BOOT
+# Installed to /usr/local/sbin by the image build (scripts/03-rootfs-image.sh). Passwordless use by
+# pardus needs /etc/sudoers.d/gemstone-kernel-update, which is NOT in the image: added by hand per board.
+# NOTE: it installs whatever .deb pardus puts in ~pardus/gemstone-update as root, and a package's
+# maintainer scripts run as root. So this sudo rule is equivalent to passwordless root for pardus:
+# fine on a development board, remove it before the board is used by others (docs/BELGE.md §22.8).
+#
+# BOOT is only 128 MiB (kernel ~52 MB + initramfs ~36 MB), so a second copy does not fit there.
+# The previous files are kept on the root file system in /var/backups/gemstone-boot instead.
+set -eu
+D=/home/pardus/gemstone-update
+B=/boot/firmware
+K=/var/backups/gemstone-boot
+FILES="Image gemstone-image-rd-t3-gem-o1.cpio.gz k3-am67a-t3-gem-o1.dtb"
+mountpoint -q "$B" || mount "$B"
+# leftovers of the old script (BOOT-side backups) and of an interrupted run only eat space
+rm -f "$B"/*.prev "$B"/*.new
+
+if [ "${1:-}" = "--restore" ]; then
+  for f in $FILES; do [ -f "$K/$f" ] || { echo "no backup of $f in $K"; exit 1; }; done
+  for f in $FILES; do cp "$K/$f" "$B/$f"; done
+  sync; echo "### restored previous files from $K; reboot to use them"; exit 0
+fi
+
+DEB=$(ls -t "$D"/linux-image-*.deb 2>/dev/null | head -1)
+[ -n "$DEB" ] || { echo "no linux-image-*.deb in $D"; exit 1; }
+PKG=$(dpkg-deb -f "$DEB" Package)
+REL=${PKG#linux-image-}
+
+echo "### BOOT: backup current kernel files to $K"
+mkdir -p "$K"
+for f in $FILES; do [ -f "$B/$f" ] && cp "$B/$f" "$K/$f"; done
+
+echo "### installing $PKG ($REL)"
+dpkg -i "$DEB"
+[ -f "/boot/initrd.img-$REL" ] || update-initramfs -c -k "$REL"
+
+if [ -f "$D/k3-am67a-t3-gem-o1.dtb" ]; then DTB="$D/k3-am67a-t3-gem-o1.dtb"
+else DTB=$(ls /usr/lib/linux-image-"$REL"/ti/k3-am67a-t3-gem-o1.dtb 2>/dev/null || true); fi
+
+# /boot/vmlinuz-* is gzip-compressed, but U-Boot's booti (our uEnv.txt) only boots the raw arm64
+# Image. (Copying vmlinuz as-is left the board stuck in U-Boot on 17 Nov 2026.)
+IMG=/boot/vmlinuz-$REL
+if gzip -t "$IMG" 2>/dev/null; then
+  mkdir -p /var/tmp/gemstone; gzip -dc "$IMG" > /var/tmp/gemstone/Image; IMG=/var/tmp/gemstone/Image
+fi
+# arm64 Image header: magic "ARMd" at offset 56. Refuse anything else before touching BOOT.
+[ "$(dd if="$IMG" bs=1 skip=56 count=4 2>/dev/null)" = "ARMd" ] || { echo "$IMG is not a raw arm64 Image; nothing changed"; exit 1; }
+
+# make sure the new files fit before touching anything (old ones are overwritten in place)
+need=0; have=$(df -k --output=avail "$B" | tail -1)
+for p in "$IMG:Image" "/boot/initrd.img-$REL:gemstone-image-rd-t3-gem-o1.cpio.gz" "${DTB:-}:k3-am67a-t3-gem-o1.dtb"; do
+  src=${p%%:*}; dst=${p#*:}; [ -n "$src" ] || continue
+  need=$((need + $(du -k "$src" | cut -f1)))
+  [ -f "$B/$dst" ] && have=$((have + $(du -k "$B/$dst" | cut -f1)))
+done
+[ "$need" -lt "$((have - 512))" ] || { echo "BOOT too small: need ${need}K, have ${have}K; nothing changed"; exit 1; }
+
+echo "### BOOT: new kernel, initramfs, DTB"
+# put <src> in place of BOOT/<dst>. If BOOT has room for a second copy, write it under a temporary
+# name and rename it over the old one (a power cut then leaves either the old or the new file, never
+# half of one). Otherwise overwrite in place; a power cut during that copy needs §22.6 recovery.
+put() {
+  src=$1; dst=$2
+  free=$(df -k --output=avail "$B" | tail -1); size=$(du -k "$src" | cut -f1)
+  if [ "$free" -gt $((size + 512)) ]; then
+    cp "$src" "$B/$dst.new"; sync; mv -f "$B/$dst.new" "$B/$dst"
+  else
+    echo "    $dst: no room for a second copy on BOOT, overwriting in place"
+    cp "$src" "$B/$dst"
+  fi
+  sync
+}
+[ -n "${DTB:-}" ] && put "$DTB" k3-am67a-t3-gem-o1.dtb
+put "/boot/initrd.img-$REL" gemstone-image-rd-t3-gem-o1.cpio.gz
+put "$IMG" Image
+rm -f /var/tmp/gemstone/Image
+df -h "$B" | tail -1
+echo "### done: reboot to start $REL (previous files in $K; undo with: gemstone-kernel-update --restore)"

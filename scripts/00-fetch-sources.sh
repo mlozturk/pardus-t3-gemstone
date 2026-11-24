@@ -5,9 +5,10 @@
 set -euo pipefail
 TOP=${TOP:-$(cd "$(dirname "$0")/.." && pwd)}
 cd "$TOP"
+. "$TOP/versions.env"      # all pinned versions
 
-# ---- cross compilers (kernel.org crosstool, GCC 11.5.0, no libc) -> gcc-11.5.0-nolibc/
-GCC=11.5.0
+# ---- cross compilers (kernel.org crosstool, no libc) -> gcc-<version>-nolibc/
+GCC=$GCC_VERSION
 URL=https://mirrors.edge.kernel.org/pub/tools/crosstool/files/bin/x86_64/$GCC
 for t in aarch64-linux arm-linux-gnueabi; do
   if [ ! -x "gcc-$GCC-nolibc/$t/bin/$t-gcc" ]; then
@@ -17,7 +18,7 @@ for t in aarch64-linux arm-linux-gnueabi; do
   fi
 done
 
-# ---- sources: <dir> <git url> <branch or tag> <exact commit>
+# ---- sources: <dir> <git url> <branch or tag> <exact commit>  (values from versions.env)
 fetch(){
   local dir=$1 url=$2 ref=$3 sha=$4
   if [ ! -d "$dir/.git" ]; then
@@ -30,11 +31,12 @@ fetch(){
   fi
   echo "    $dir @ $(git -C "$dir" rev-parse --short HEAD)"
 }
-fetch u-boot             https://github.com/t3gemstone/u-boot.git              v2025.04-rc3-t3-gem-o1          b8410d78120ed91156f3ec7ede81bed004f8b46e
-fetch linux              https://github.com/t3gemstone/linux.git               v6.12.24-ti-arm64-r43-t3-gem-o1 6267aeaee46f09c9550cf135c6041970c973d7c0
-fetch trusted-firmware-a https://github.com/TrustedFirmware-A/trusted-firmware-a.git lts-v2.12.4           a9fcaf3ccf3c0091c33ba6ef03b8ed629394c240
-fetch optee_os           https://github.com/OP-TEE/optee_os.git                4.6.0                           71785645fa6ce42db40dbf5a54e0eaedc4f61591
-fetch ti-linux-firmware  https://github.com/beagleboard/ti-linux-firmware.git  11.01.03                        e594deb508a322d5681888d48fbb153953b06ca9
+# shellcheck disable=SC2086   (each variable holds "url ref commit")
+fetch u-boot             $UBOOT
+fetch linux              $T3_LINUX
+fetch trusted-firmware-a $TFA
+fetch optee_os           $OPTEE
+fetch ti-linux-firmware  $TI_FIRMWARE
 
 # ---- our kernel patches (skipped if already applied)
 for p in patches/linux-*.patch; do
@@ -44,4 +46,5 @@ for p in patches/linux-*.patch; do
     echo "### apply $p"; git -C linux apply "$TOP/$p"
   fi
 done
+# The Debian and mainline kernels download their own (pinned) sources: kernels/*/build.sh
 echo SOURCES_OK

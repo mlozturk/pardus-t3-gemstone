@@ -1,0 +1,26 @@
+// SPDX-License-Identifier: GPL-2.0-only OR MIT
+/*
+ * GPU and VPU-SRAM nodes merged in mainline v7.4, for kernels older than 7.4: the 6.18 LTS kernel
+ * of kernels/mainline (an LTS branch gets fixes only, so 6.18.y will never have these nodes).
+ * The Debian kernel gets the same nodes from kernels/debian/patches (0023, 0024).
+ * Drop this include once the kernel is 7.4 or newer (the SoC .dtsi then has them).
+ */
+
+/* from mainline v7.4: arm64: dts: ti: am62p/j722s: Add GPU node (9c8d40bf) */
+&cbass_main {
+	gpu: gpu@fd80000 {
+		compatible = "ti,am62p-gpu", "img,img-bxs-4-64", "img,img-rogue";
+		reg = <0x00 0x0fd80000 0x00 0x80000>;
+		clocks = <&k3_clks 237 3>;
+		clock-names = "core";
+		interrupts = <GIC_SPI 241 IRQ_TYPE_LEVEL_HIGH>;
+		power-domains = <&k3_pds 237 TI_SCI_PD_EXCLUSIVE>,
+				<&k3_pds 242 TI_SCI_PD_EXCLUSIVE>;
+		power-domain-names = "a", "b";
+	};
+};
+
+/* from mainline v7.4: Assign SRAM to VPU node (330236fd) */
+&vpu {
+	sram = <&oc_sram>;
+};

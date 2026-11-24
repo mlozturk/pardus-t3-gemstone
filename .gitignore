@@ -1,0 +1,33 @@
+# --- downloaded sources (scripts/00-fetch-sources.sh) ---
+/gcc-*-nolibc/
+/x86_64-gcc-*.tar.xz
+/u-boot/
+/linux/
+/trusted-firmware-a/
+/optee_os/
+/ti-linux-firmware/
+
+# --- build intermediates and outputs ---
+/build-user/
+/build/
+/out/
+/release/
+/vendor-boot/
+
+# per-kernel generated files (build.sh and patches/ stay in the repo)
+kernels/*/src/
+kernels/*/build/
+kernels/*/out/
+kernels/*/*.tar.*
+kernels/*/dmesg-*.txt
+
+# --- logs ---
+/out-*.log
+
+# --- local build preference markers ---
+/.kernel
+/.flavor
+
+# --- editor / tool leftovers ---
+.configopencode*.jsonc
+*.swp
