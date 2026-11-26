@@ -4,7 +4,7 @@
 # Usage:  scripts/05-kernel-deploy.sh <board-ip> [ssh-key]
 #   e.g.  scripts/05-kernel-deploy.sh 10.42.0.12 ~/.ssh/gemstone_board
 #         KERNEL=mainline scripts/05-kernel-deploy.sh 10.42.0.12
-#   KERNEL = lts-hdmi | mainline | stable-hdmi | stable | debian (default: the .kernel marker, else lts-hdmi)
+#   KERNEL = lts-hdmi | mainline | stable-hdmi | stable | trixie-hdmi | trixie | debian (default: the .kernel marker, else lts-hdmi)
 #
 # Steps: copy kernels/$KERNEL/out/{linux-image-*.deb, k3-am67a-t3-gem-o1.dtb} to ~pardus/gemstone-update/
 #        -> board runs /usr/local/sbin/gemstone-kernel-update (installs the .deb, copies kernel,
@@ -21,7 +21,7 @@ TOP=${TOP:-$(cd "$(dirname "$0")/.." && pwd)}
 IP=${1:?usage: $0 <board-ip> [ssh-key]}
 KEY=${2:-$HOME/.ssh/gemstone_board}
 KERNEL=${KERNEL:-$(cat "$TOP/.kernel" 2>/dev/null || echo lts-hdmi)}
-case "$KERNEL" in debian|mainline|lts-hdmi|stable|stable-hdmi) ;; *) echo "KERNEL must be lts-hdmi, mainline, stable-hdmi, stable or debian (T3's kernel: write the SD card)"; exit 1 ;; esac
+case "$KERNEL" in debian|mainline|lts-hdmi|stable|stable-hdmi|trixie|trixie-hdmi) ;; *) echo "KERNEL must be lts-hdmi, mainline, stable-hdmi, stable, trixie-hdmi, trixie or debian (T3's kernel: write the SD card)"; exit 1 ;; esac
 OUTD=$TOP/kernels/$KERNEL/out
 ls "$OUTD"/linux-image-*.deb >/dev/null 2>&1 || { echo "no kernel package in $OUTD: run kernels/$KERNEL/build.sh"; exit 1; }
 SSH=(ssh -i "$KEY" -o BatchMode=yes -o ConnectTimeout=8)

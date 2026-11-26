@@ -1,0 +1,5146 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: gemstone <gemstone@localhost>
+Date: Tue, 24 Nov 2026 21:43:55 +0300
+Subject: [PATCH 01/14] drm/tidss, drm/imagination: take the drivers from
+ v6.18.64
+
+Debian trixie's 6.12 knows neither the AM62P/J722S display unit (tidss)
+nor the PowerVR BXS-4-64 GPU (imagination). Take both drivers, and the
+PowerVR uapi header, unchanged from kernel.org v6.18.64. The next patch
+adapts them to the 6.12 DRM core.
+---
+ drivers/gpu/drm/imagination/Kconfig           |   4 +-
+ drivers/gpu/drm/imagination/Makefile          |   4 +-
+ drivers/gpu/drm/imagination/pvr_context.c     |  18 +-
+ drivers/gpu/drm/imagination/pvr_debugfs.c     |   3 +-
+ drivers/gpu/drm/imagination/pvr_device.c      | 118 +++-
+ drivers/gpu/drm/imagination/pvr_device.h      |  65 +-
+ drivers/gpu/drm/imagination/pvr_drv.c         |  44 +-
+ drivers/gpu/drm/imagination/pvr_drv.h         |   1 -
+ drivers/gpu/drm/imagination/pvr_free_list.c   |   3 +-
+ drivers/gpu/drm/imagination/pvr_fw.c          |  40 +-
+ drivers/gpu/drm/imagination/pvr_fw.h          |  85 +--
+ drivers/gpu/drm/imagination/pvr_fw_meta.c     |  26 +-
+ drivers/gpu/drm/imagination/pvr_fw_mips.c     |  85 +--
+ drivers/gpu/drm/imagination/pvr_fw_riscv.c    | 165 +++++
+ .../gpu/drm/imagination/pvr_fw_startstop.c    |  17 +
+ drivers/gpu/drm/imagination/pvr_fw_trace.c    |  31 +-
+ drivers/gpu/drm/imagination/pvr_fw_trace.h    |   2 -
+ drivers/gpu/drm/imagination/pvr_fw_util.c     |  66 ++
+ drivers/gpu/drm/imagination/pvr_gem.c         |  18 +-
+ drivers/gpu/drm/imagination/pvr_gem.h         |   6 +-
+ drivers/gpu/drm/imagination/pvr_hwrt.c        |  12 +-
+ drivers/gpu/drm/imagination/pvr_job.c         |  25 +-
+ drivers/gpu/drm/imagination/pvr_mmu.c         |   8 +-
+ drivers/gpu/drm/imagination/pvr_power.c       | 254 ++++++-
+ drivers/gpu/drm/imagination/pvr_power.h       |  18 +
+ drivers/gpu/drm/imagination/pvr_queue.c       |  13 +-
+ .../gpu/drm/imagination/pvr_rogue_cr_defs.h   | 153 +++-
+ drivers/gpu/drm/imagination/pvr_rogue_riscv.h |  41 ++
+ drivers/gpu/drm/imagination/pvr_stream.c      |  12 +-
+ drivers/gpu/drm/imagination/pvr_vm.c          |  15 +-
+ drivers/gpu/drm/imagination/pvr_vm_mips.c     |   3 +-
+ drivers/gpu/drm/tidss/Kconfig                 |   1 +
+ drivers/gpu/drm/tidss/Makefile                |   3 +-
+ drivers/gpu/drm/tidss/tidss_crtc.c            |   4 +-
+ drivers/gpu/drm/tidss/tidss_dispc.c           | 668 +++++++++++-------
+ drivers/gpu/drm/tidss/tidss_dispc.h           |  26 +-
+ drivers/gpu/drm/tidss/tidss_dispc_regs.h      | 107 ++-
+ drivers/gpu/drm/tidss/tidss_drv.c             |  28 +-
+ drivers/gpu/drm/tidss/tidss_drv.h             |  14 +-
+ drivers/gpu/drm/tidss/tidss_encoder.c         |  15 +-
+ drivers/gpu/drm/tidss/tidss_irq.c             |  36 +-
+ drivers/gpu/drm/tidss/tidss_irq.h             |   4 +-
+ drivers/gpu/drm/tidss/tidss_kms.c             |  34 +-
+ drivers/gpu/drm/tidss/tidss_oldi.c            | 619 ++++++++++++++++
+ drivers/gpu/drm/tidss/tidss_oldi.h            |  43 ++
+ drivers/gpu/drm/tidss/tidss_plane.c           |  12 +-
+ drivers/gpu/drm/tidss/tidss_plane.h           |   4 +
+ drivers/gpu/drm/tidss/tidss_scale_coefs.h     |   2 +
+ 48 files changed, 2348 insertions(+), 627 deletions(-)
+ create mode 100644 drivers/gpu/drm/imagination/pvr_fw_riscv.c
+ create mode 100644 drivers/gpu/drm/imagination/pvr_fw_util.c
+ create mode 100644 drivers/gpu/drm/imagination/pvr_rogue_riscv.h
+ create mode 100644 drivers/gpu/drm/tidss/tidss_oldi.c
+ create mode 100644 drivers/gpu/drm/tidss/tidss_oldi.h
+
+diff --git a/drivers/gpu/drm/imagination/Kconfig b/drivers/gpu/drm/imagination/Kconfig
+index 3bfa2ac21..0482bfcef 100644
+--- a/drivers/gpu/drm/imagination/Kconfig
++++ b/drivers/gpu/drm/imagination/Kconfig
+@@ -3,9 +3,11 @@
+ 
+ config DRM_POWERVR
+ 	tristate "Imagination Technologies PowerVR (Series 6 and later) & IMG Graphics"
+-	depends on ARM64
++	depends on (ARM64 || RISCV && 64BIT)
+ 	depends on DRM
++	depends on MMU
+ 	depends on PM
++	depends on POWER_SEQUENCING || !POWER_SEQUENCING
+ 	select DRM_EXEC
+ 	select DRM_GEM_SHMEM_HELPER
+ 	select DRM_SCHED
+diff --git a/drivers/gpu/drm/imagination/Makefile b/drivers/gpu/drm/imagination/Makefile
+index 9bc6a3884..7cca66f00 100644
+--- a/drivers/gpu/drm/imagination/Makefile
++++ b/drivers/gpu/drm/imagination/Makefile
+@@ -1,8 +1,6 @@
+ # SPDX-License-Identifier: GPL-2.0-only OR MIT
+ # Copyright (c) 2023 Imagination Technologies Ltd.
+ 
+-subdir-ccflags-y := -I$(src)
+-
+ powervr-y := \
+ 	pvr_ccb.o \
+ 	pvr_cccb.o \
+@@ -14,8 +12,10 @@ powervr-y := \
+ 	pvr_fw.o \
+ 	pvr_fw_meta.o \
+ 	pvr_fw_mips.o \
++	pvr_fw_riscv.o \
+ 	pvr_fw_startstop.o \
+ 	pvr_fw_trace.o \
++	pvr_fw_util.o \
+ 	pvr_gem.o \
+ 	pvr_hwrt.o \
+ 	pvr_job.o \
+diff --git a/drivers/gpu/drm/imagination/pvr_context.c b/drivers/gpu/drm/imagination/pvr_context.c
+index af4c93660..5befaed56 100644
+--- a/drivers/gpu/drm/imagination/pvr_context.c
++++ b/drivers/gpu/drm/imagination/pvr_context.c
+@@ -73,24 +73,12 @@ process_static_context_state(struct pvr_device *pvr_dev, const struct pvr_stream
+ 	void *stream;
+ 	int err;
+ 
+-	stream = kzalloc(stream_size, GFP_KERNEL);
+-	if (!stream)
+-		return -ENOMEM;
+-
+-	if (copy_from_user(stream, u64_to_user_ptr(stream_user_ptr), stream_size)) {
+-		err = -EFAULT;
+-		goto err_free;
+-	}
++	stream = memdup_user(u64_to_user_ptr(stream_user_ptr), stream_size);
++	if (IS_ERR(stream))
++		return PTR_ERR(stream);
+ 
+ 	err = pvr_stream_process(pvr_dev, cmd_defs, stream, stream_size, dest);
+-	if (err)
+-		goto err_free;
+-
+-	kfree(stream);
+-
+-	return 0;
+ 
+-err_free:
+ 	kfree(stream);
+ 
+ 	return err;
+diff --git a/drivers/gpu/drm/imagination/pvr_debugfs.c b/drivers/gpu/drm/imagination/pvr_debugfs.c
+index 6b77c9b4b..c7ce7daaa 100644
+--- a/drivers/gpu/drm/imagination/pvr_debugfs.c
++++ b/drivers/gpu/drm/imagination/pvr_debugfs.c
+@@ -28,9 +28,8 @@ pvr_debugfs_init(struct drm_minor *minor)
+ 	struct drm_device *drm_dev = minor->dev;
+ 	struct pvr_device *pvr_dev = to_pvr_device(drm_dev);
+ 	struct dentry *root = minor->debugfs_root;
+-	size_t i;
+ 
+-	for (i = 0; i < ARRAY_SIZE(pvr_debugfs_entries); ++i) {
++	for (size_t i = 0; i < ARRAY_SIZE(pvr_debugfs_entries); ++i) {
+ 		const struct pvr_debugfs_entry *entry = &pvr_debugfs_entries[i];
+ 		struct dentry *dir;
+ 
+diff --git a/drivers/gpu/drm/imagination/pvr_device.c b/drivers/gpu/drm/imagination/pvr_device.c
+index 6bccbde49..b2275cb73 100644
+--- a/drivers/gpu/drm/imagination/pvr_device.c
++++ b/drivers/gpu/drm/imagination/pvr_device.c
+@@ -23,8 +23,10 @@
+ #include <linux/firmware.h>
+ #include <linux/gfp.h>
+ #include <linux/interrupt.h>
++#include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
++#include <linux/reset.h>
+ #include <linux/slab.h>
+ #include <linux/stddef.h>
+ #include <linux/types.h>
+@@ -146,9 +148,61 @@ static void pvr_device_process_active_queues(struct pvr_device *pvr_dev)
+ 	mutex_unlock(&pvr_dev->queues.lock);
+ }
+ 
++static bool pvr_device_safety_irq_pending(struct pvr_device *pvr_dev)
++{
++	u32 events;
++
++	WARN_ON_ONCE(!pvr_dev->has_safety_events);
++
++	events = pvr_cr_read32(pvr_dev, ROGUE_CR_EVENT_STATUS);
++
++	return (events & ROGUE_CR_EVENT_STATUS_SAFETY_EN) != 0;
++}
++
++static void pvr_device_safety_irq_clear(struct pvr_device *pvr_dev)
++{
++	WARN_ON_ONCE(!pvr_dev->has_safety_events);
++
++	pvr_cr_write32(pvr_dev, ROGUE_CR_EVENT_CLEAR,
++		       ROGUE_CR_EVENT_CLEAR_SAFETY_EN);
++}
++
++static void pvr_device_handle_safety_events(struct pvr_device *pvr_dev)
++{
++	struct drm_device *drm_dev = from_pvr_device(pvr_dev);
++	u32 events;
++
++	WARN_ON_ONCE(!pvr_dev->has_safety_events);
++
++	events = pvr_cr_read32(pvr_dev, ROGUE_CR_SAFETY_EVENT_STATUS__ROGUEXE);
++
++	/* Handle only these events on the host and leave the rest to the FW. */
++	events &= ROGUE_CR_SAFETY_EVENT_STATUS__ROGUEXE__FAULT_FW_EN |
++		ROGUE_CR_SAFETY_EVENT_STATUS__ROGUEXE__WATCHDOG_TIMEOUT_EN;
++
++	pvr_cr_write32(pvr_dev, ROGUE_CR_SAFETY_EVENT_CLEAR__ROGUEXE, events);
++
++	if (events & ROGUE_CR_SAFETY_EVENT_STATUS__ROGUEXE__FAULT_FW_EN) {
++		u32 fault_fw = pvr_cr_read32(pvr_dev, ROGUE_CR_FAULT_FW_STATUS);
++
++		pvr_cr_write32(pvr_dev, ROGUE_CR_FAULT_FW_CLEAR, fault_fw);
++
++		drm_info(drm_dev, "Safety event: FW fault (mask=0x%08x)\n", fault_fw);
++	}
++
++	if (events & ROGUE_CR_SAFETY_EVENT_STATUS__ROGUEXE__WATCHDOG_TIMEOUT_EN) {
++		/*
++		 * The watchdog timer is disabled by the driver so this event
++		 * should never be fired.
++		 */
++		drm_info(drm_dev, "Safety event: Watchdog timeout\n");
++	}
++}
++
+ static irqreturn_t pvr_device_irq_thread_handler(int irq, void *data)
+ {
+ 	struct pvr_device *pvr_dev = data;
++	struct drm_device *drm_dev = from_pvr_device(pvr_dev);
+ 	irqreturn_t ret = IRQ_NONE;
+ 
+ 	/* We are in the threaded handler, we can keep dequeuing events until we
+@@ -164,30 +218,59 @@ static irqreturn_t pvr_device_irq_thread_handler(int irq, void *data)
+ 			pvr_device_process_active_queues(pvr_dev);
+ 		}
+ 
+-		pm_runtime_mark_last_busy(from_pvr_device(pvr_dev)->dev);
++		pm_runtime_mark_last_busy(drm_dev->dev);
+ 
+ 		ret = IRQ_HANDLED;
+ 	}
+ 
+-	/* Unmask FW irqs before returning, so new interrupts can be received. */
+-	pvr_fw_irq_enable(pvr_dev);
++	if (pvr_dev->has_safety_events) {
++		while (pvr_device_safety_irq_pending(pvr_dev)) {
++			pvr_device_safety_irq_clear(pvr_dev);
++			pvr_device_handle_safety_events(pvr_dev);
++
++			ret = IRQ_HANDLED;
++		}
++	}
++
+ 	return ret;
+ }
+ 
+ static irqreturn_t pvr_device_irq_handler(int irq, void *data)
+ {
+ 	struct pvr_device *pvr_dev = data;
++	bool safety_irq_pending = false;
++
++	if (pvr_dev->has_safety_events)
++		safety_irq_pending = pvr_device_safety_irq_pending(pvr_dev);
+ 
+-	if (!pvr_fw_irq_pending(pvr_dev))
++	if (!pvr_fw_irq_pending(pvr_dev) && !safety_irq_pending)
+ 		return IRQ_NONE; /* Spurious IRQ - ignore. */
+ 
+-	/* Mask the FW interrupts before waking up the thread. Will be unmasked
+-	 * when the thread handler is done processing events.
+-	 */
+-	pvr_fw_irq_disable(pvr_dev);
+ 	return IRQ_WAKE_THREAD;
+ }
+ 
++static void pvr_device_safety_irq_init(struct pvr_device *pvr_dev)
++{
++	u32 num_ecc_rams = 0;
++
++	/*
++	 * Safety events are an optional feature of the RogueXE platform. They
++	 * are only enabled if at least one of ECC memory or the watchdog timer
++	 * are present in HW. While safety events can be generated by other
++	 * systems, that will never happen if the above mentioned hardware is
++	 * not present.
++	 */
++	if (!PVR_HAS_FEATURE(pvr_dev, roguexe)) {
++		pvr_dev->has_safety_events = false;
++		return;
++	}
++
++	PVR_FEATURE_VALUE(pvr_dev, ecc_rams, &num_ecc_rams);
++
++	pvr_dev->has_safety_events =
++		num_ecc_rams > 0 || PVR_HAS_FEATURE(pvr_dev, watchdog_timer);
++}
++
+ /**
+  * pvr_device_irq_init() - Initialise IRQ required by a PowerVR device
+  * @pvr_dev: Target PowerVR device.
+@@ -205,17 +288,25 @@ pvr_device_irq_init(struct pvr_device *pvr_dev)
+ 
+ 	init_waitqueue_head(&pvr_dev->kccb.rtn_q);
+ 
++	pvr_device_safety_irq_init(pvr_dev);
++
+ 	pvr_dev->irq = platform_get_irq(plat_dev, 0);
+ 	if (pvr_dev->irq < 0)
+ 		return pvr_dev->irq;
+ 
+ 	/* Clear any pending events before requesting the IRQ line. */
+ 	pvr_fw_irq_clear(pvr_dev);
+-	pvr_fw_irq_enable(pvr_dev);
+ 
++	if (pvr_dev->has_safety_events)
++		pvr_device_safety_irq_clear(pvr_dev);
++
++	/*
++	 * The ONESHOT flag ensures IRQs are masked while the thread handler is
++	 * running.
++	 */
+ 	return request_threaded_irq(pvr_dev->irq, pvr_device_irq_handler,
+ 				    pvr_device_irq_thread_handler,
+-				    IRQF_SHARED, "gpu", pvr_dev);
++				    IRQF_SHARED | IRQF_ONESHOT, "gpu", pvr_dev);
+ }
+ 
+ /**
+@@ -496,6 +587,9 @@ pvr_device_init(struct pvr_device *pvr_dev)
+ 	struct device *dev = drm_dev->dev;
+ 	int err;
+ 
++	/* Get the platform-specific data based on the compatible string. */
++	pvr_dev->device_data = of_device_get_match_data(dev);
++
+ 	/*
+ 	 * Setup device parameters. We do this first in case other steps
+ 	 * depend on them.
+@@ -509,6 +603,10 @@ pvr_device_init(struct pvr_device *pvr_dev)
+ 	if (err)
+ 		return err;
+ 
++	err = pvr_dev->device_data->pwr_ops->init(pvr_dev);
++	if (err)
++		return err;
++
+ 	/* Explicitly power the GPU so we can access control registers before the FW is booted. */
+ 	err = pm_runtime_resume_and_get(dev);
+ 	if (err)
+diff --git a/drivers/gpu/drm/imagination/pvr_device.h b/drivers/gpu/drm/imagination/pvr_device.h
+index 6d0dfacb6..ec53ff275 100644
+--- a/drivers/gpu/drm/imagination/pvr_device.h
++++ b/drivers/gpu/drm/imagination/pvr_device.h
+@@ -18,6 +18,7 @@
+ #include <linux/bits.h>
+ #include <linux/compiler_attributes.h>
+ #include <linux/compiler_types.h>
++#include <linux/device.h>
+ #include <linux/io.h>
+ #include <linux/iopoll.h>
+ #include <linux/kernel.h>
+@@ -36,6 +37,9 @@ struct clk;
+ /* Forward declaration from <linux/firmware.h>. */
+ struct firmware;
+ 
++/* Forward declaration from <linux/pwrseq/consumer.h> */
++struct pwrseq_desc;
++
+ /**
+  * struct pvr_gpu_id - Hardware GPU ID information for a PowerVR device
+  * @b: Branch ID.
+@@ -56,6 +60,14 @@ struct pvr_fw_version {
+ 	u16 major, minor;
+ };
+ 
++/**
++ * struct pvr_device_data - Platform specific data associated with a compatible string.
++ * @pwr_ops: Pointer to a structure with platform-specific power functions.
++ */
++struct pvr_device_data {
++	const struct pvr_power_sequence_ops *pwr_ops;
++};
++
+ /**
+  * struct pvr_device - powervr-specific wrapper for &struct drm_device
+  */
+@@ -97,6 +109,9 @@ struct pvr_device {
+ 	/** @fw_version: Firmware version detected at runtime. */
+ 	struct pvr_fw_version fw_version;
+ 
++	/** @device_data: Pointer to platform-specific data. */
++	const struct pvr_device_data *device_data;
++
+ 	/** @regs_resource: Resource representing device control registers. */
+ 	struct resource *regs_resource;
+ 
+@@ -131,6 +146,33 @@ struct pvr_device {
+ 	 */
+ 	struct clk *mem_clk;
+ 
++	/**
++	 * @power: Optional power domain devices.
++	 *
++	 * On platforms with more than one power domain for the GPU, they are
++	 * stored here in @domain_devs, along with links between them in
++	 * @domain_links. The size of @domain_devs is given by @domain_count,
++	 * while the size of @domain_links is (2 * @domain_count) - 1.
++	 */
++	struct pvr_device_power {
++		struct device **domain_devs;
++		struct device_link **domain_links;
++
++		u32 domain_count;
++	} power;
++
++	/**
++	 * @reset: Optional reset line.
++	 *
++	 * This may be used on some platforms to provide a reset line that needs to be de-asserted
++	 * after power-up procedure. It would also need to be asserted after the power-down
++	 * procedure.
++	 */
++	struct reset_control *reset;
++
++	/** @pwrseq: Pointer to a power sequencer, if one is used. */
++	struct pwrseq_desc *pwrseq;
++
+ 	/** @irq: IRQ number. */
+ 	int irq;
+ 
+@@ -300,6 +342,9 @@ struct pvr_device {
+ 	 *  struct pvr_file.
+ 	 */
+ 	spinlock_t ctx_list_lock;
++
++	/** @has_safety_events: Whether this device can raise safety events. */
++	bool has_safety_events;
+ };
+ 
+ /**
+@@ -728,8 +773,22 @@ pvr_ioctl_union_padding_check(void *instance, size_t union_offset,
+ 					      __union_size, __member_size);  \
+ 	})
+ 
+-#define PVR_FW_PROCESSOR_TYPE_META  0
+-#define PVR_FW_PROCESSOR_TYPE_MIPS  1
+-#define PVR_FW_PROCESSOR_TYPE_RISCV 2
++/*
++ * These utility functions should more properly be placed in pvr_fw.h, but that
++ * would cause a dependency cycle between that header and this one. Since
++ * they're primarily used in pvr_device.c, let's put them in here for now.
++ */
++
++static __always_inline bool
++pvr_fw_irq_pending(struct pvr_device *pvr_dev)
++{
++	return pvr_dev->fw_dev.defs->irq_pending(pvr_dev);
++}
++
++static __always_inline void
++pvr_fw_irq_clear(struct pvr_device *pvr_dev)
++{
++	pvr_dev->fw_dev.defs->irq_clear(pvr_dev);
++}
+ 
+ #endif /* PVR_DEVICE_H */
+diff --git a/drivers/gpu/drm/imagination/pvr_drv.c b/drivers/gpu/drm/imagination/pvr_drv.c
+index ba1acf597..e403411cf 100644
+--- a/drivers/gpu/drm/imagination/pvr_drv.c
++++ b/drivers/gpu/drm/imagination/pvr_drv.c
+@@ -44,6 +44,7 @@
+  * This driver supports the following PowerVR/IMG graphics cores from Imagination Technologies:
+  *
+  * * AXE-1-16M (found in Texas Instruments AM62)
++ * * BXS-4-64 MC1 (found in Texas Instruments J721S2/AM68)
+  */
+ 
+ /**
+@@ -221,7 +222,7 @@ pvr_ioctl_get_bo_mmap_offset(struct drm_device *drm_dev, void *raw_args,
+ 	return ret;
+ }
+ 
+-static __always_inline u64
++static __always_inline __maybe_unused u64
+ pvr_fw_version_packed(u32 major, u32 minor)
+ {
+ 	return ((u64)major << 32) | minor;
+@@ -1386,7 +1387,6 @@ static struct drm_driver pvr_drm_driver = {
+ 
+ 	.name = PVR_DRIVER_NAME,
+ 	.desc = PVR_DRIVER_DESC,
+-	.date = PVR_DRIVER_DATE,
+ 	.major = PVR_DRIVER_MAJOR,
+ 	.minor = PVR_DRIVER_MINOR,
+ 	.patchlevel = PVR_DRIVER_PATCHLEVEL,
+@@ -1411,6 +1411,10 @@ pvr_probe(struct platform_device *plat_dev)
+ 
+ 	platform_set_drvdata(plat_dev, drm_dev);
+ 
++	err = pvr_power_domains_init(pvr_dev);
++	if (err)
++		return err;
++
+ 	init_rwsem(&pvr_dev->reset_sem);
+ 
+ 	pvr_context_device_init(pvr_dev);
+@@ -1450,6 +1454,8 @@ pvr_probe(struct platform_device *plat_dev)
+ err_context_fini:
+ 	pvr_context_device_fini(pvr_dev);
+ 
++	pvr_power_domains_fini(pvr_dev);
++
+ 	return err;
+ }
+ 
+@@ -1470,10 +1476,36 @@ static void pvr_remove(struct platform_device *plat_dev)
+ 	pvr_watchdog_fini(pvr_dev);
+ 	pvr_queue_device_fini(pvr_dev);
+ 	pvr_context_device_fini(pvr_dev);
++	pvr_power_domains_fini(pvr_dev);
+ }
+ 
++static const struct pvr_device_data pvr_device_data_manual = {
++	.pwr_ops = &pvr_power_sequence_ops_manual,
++};
++
++static const struct pvr_device_data pvr_device_data_pwrseq = {
++	.pwr_ops = &pvr_power_sequence_ops_pwrseq,
++};
++
+ static const struct of_device_id dt_match[] = {
+-	{ .compatible = "img,img-axe", .data = NULL },
++	{
++		.compatible = "thead,th1520-gpu",
++		.data = &pvr_device_data_pwrseq,
++	},
++	{
++		.compatible = "img,img-rogue",
++		.data = &pvr_device_data_manual,
++	},
++
++	/*
++	 * This legacy compatible string was introduced early on before the more generic
++	 * "img,img-rogue" was added. Keep it around here for compatibility, but never use
++	 * "img,img-axe" in new devicetrees.
++	 */
++	{
++		.compatible = "img,img-axe",
++		.data = &pvr_device_data_manual,
++	},
+ 	{}
+ };
+ MODULE_DEVICE_TABLE(of, dt_match);
+@@ -1484,7 +1516,7 @@ static const struct dev_pm_ops pvr_pm_ops = {
+ 
+ static struct platform_driver pvr_driver = {
+ 	.probe = pvr_probe,
+-	.remove_new = pvr_remove,
++	.remove = pvr_remove,
+ 	.driver = {
+ 		.name = PVR_DRIVER_NAME,
+ 		.pm = &pvr_pm_ops,
+@@ -1496,5 +1528,7 @@ module_platform_driver(pvr_driver);
+ MODULE_AUTHOR("Imagination Technologies Ltd.");
+ MODULE_DESCRIPTION(PVR_DRIVER_DESC);
+ MODULE_LICENSE("Dual MIT/GPL");
+-MODULE_IMPORT_NS(DMA_BUF);
++MODULE_IMPORT_NS("DMA_BUF");
+ MODULE_FIRMWARE("powervr/rogue_33.15.11.3_v1.fw");
++MODULE_FIRMWARE("powervr/rogue_36.52.104.182_v1.fw");
++MODULE_FIRMWARE("powervr/rogue_36.53.104.796_v1.fw");
+diff --git a/drivers/gpu/drm/imagination/pvr_drv.h b/drivers/gpu/drm/imagination/pvr_drv.h
+index 378fe477b..7fa147312 100644
+--- a/drivers/gpu/drm/imagination/pvr_drv.h
++++ b/drivers/gpu/drm/imagination/pvr_drv.h
+@@ -9,7 +9,6 @@
+ 
+ #define PVR_DRIVER_NAME "powervr"
+ #define PVR_DRIVER_DESC "Imagination PowerVR (Series 6 and later) & IMG Graphics"
+-#define PVR_DRIVER_DATE "20230904"
+ 
+ /*
+  * Driver interface version:
+diff --git a/drivers/gpu/drm/imagination/pvr_free_list.c b/drivers/gpu/drm/imagination/pvr_free_list.c
+index 083ae6fa0..2ced452e9 100644
+--- a/drivers/gpu/drm/imagination/pvr_free_list.c
++++ b/drivers/gpu/drm/imagination/pvr_free_list.c
+@@ -238,11 +238,10 @@ pvr_free_list_insert_pages_locked(struct pvr_free_list *free_list,
+ 		dma_addr_t dma_addr = sg_page_iter_dma_address(&dma_iter);
+ 		u64 dma_pfn = dma_addr >>
+ 			       ROGUE_BIF_PM_PHYSICAL_PAGE_ALIGNSHIFT;
+-		u32 dma_addr_offset;
+ 
+ 		BUILD_BUG_ON(ROGUE_BIF_PM_PHYSICAL_PAGE_SIZE > PAGE_SIZE);
+ 
+-		for (dma_addr_offset = 0; dma_addr_offset < PAGE_SIZE;
++		for (u32 dma_addr_offset = 0; dma_addr_offset < PAGE_SIZE;
+ 		     dma_addr_offset += ROGUE_BIF_PM_PHYSICAL_PAGE_SIZE) {
+ 			WARN_ON_ONCE(dma_pfn >> 32);
+ 
+diff --git a/drivers/gpu/drm/imagination/pvr_fw.c b/drivers/gpu/drm/imagination/pvr_fw.c
+index d09c4c684..b2f8cba77 100644
+--- a/drivers/gpu/drm/imagination/pvr_fw.c
++++ b/drivers/gpu/drm/imagination/pvr_fw.c
+@@ -50,9 +50,8 @@ pvr_fw_find_layout_entry(struct pvr_device *pvr_dev, enum pvr_fw_section_id id)
+ {
+ 	const struct pvr_fw_layout_entry *layout_entries = pvr_dev->fw_dev.layout_entries;
+ 	u32 num_layout_entries = pvr_dev->fw_dev.header->layout_entry_num;
+-	u32 entry;
+ 
+-	for (entry = 0; entry < num_layout_entries; entry++) {
++	for (u32 entry = 0; entry < num_layout_entries; entry++) {
+ 		if (layout_entries[entry].id == id)
+ 			return &layout_entries[entry];
+ 	}
+@@ -65,9 +64,8 @@ pvr_fw_find_private_data(struct pvr_device *pvr_dev)
+ {
+ 	const struct pvr_fw_layout_entry *layout_entries = pvr_dev->fw_dev.layout_entries;
+ 	u32 num_layout_entries = pvr_dev->fw_dev.header->layout_entry_num;
+-	u32 entry;
+ 
+-	for (entry = 0; entry < num_layout_entries; entry++) {
++	for (u32 entry = 0; entry < num_layout_entries; entry++) {
+ 		if (layout_entries[entry].id == META_PRIVATE_DATA ||
+ 		    layout_entries[entry].id == MIPS_PRIVATE_DATA ||
+ 		    layout_entries[entry].id == RISCV_PRIVATE_DATA)
+@@ -97,7 +95,6 @@ pvr_fw_validate(struct pvr_device *pvr_dev)
+ 	const u8 *fw = firmware->data;
+ 	u32 fw_offset = firmware->size - SZ_4K;
+ 	u32 layout_table_size;
+-	u32 entry;
+ 
+ 	if (firmware->size < SZ_4K || (firmware->size % FW_BLOCK_SIZE))
+ 		return -EINVAL;
+@@ -144,7 +141,7 @@ pvr_fw_validate(struct pvr_device *pvr_dev)
+ 		return -EINVAL;
+ 
+ 	layout_entries = (const struct pvr_fw_layout_entry *)&fw[fw_offset];
+-	for (entry = 0; entry < header->layout_entry_num; entry++) {
++	for (u32 entry = 0; entry < header->layout_entry_num; entry++) {
+ 		u32 start_addr = layout_entries[entry].base_addr;
+ 		u32 end_addr = start_addr + layout_entries[entry].alloc_size;
+ 
+@@ -233,13 +230,12 @@ pvr_fw_find_mmu_segment(struct pvr_device *pvr_dev, u32 addr, u32 size, void *fw
+ 	const struct pvr_fw_layout_entry *layout_entries = pvr_dev->fw_dev.layout_entries;
+ 	u32 num_layout_entries = pvr_dev->fw_dev.header->layout_entry_num;
+ 	u32 end_addr = addr + size;
+-	int entry = 0;
+ 
+ 	/* Ensure requested range is not zero, and size is not causing addr to overflow. */
+ 	if (end_addr <= addr)
+ 		return -EINVAL;
+ 
+-	for (entry = 0; entry < num_layout_entries; entry++) {
++	for (int entry = 0; entry < num_layout_entries; entry++) {
+ 		u32 entry_start_addr = layout_entries[entry].base_addr;
+ 		u32 entry_end_addr = entry_start_addr + layout_entries[entry].alloc_size;
+ 
+@@ -441,6 +437,9 @@ fw_runtime_cfg_init(void *cpu_ptr, void *priv)
+ 	runtime_cfg->active_pm_latency_persistant = true;
+ 	WARN_ON(PVR_FEATURE_VALUE(pvr_dev, num_clusters,
+ 				  &runtime_cfg->default_dusts_num_init) != 0);
++
++	/* Keep watchdog timer disabled. */
++	runtime_cfg->wdg_period_us = 0;
+ }
+ 
+ static void
+@@ -663,7 +662,7 @@ pvr_fw_process(struct pvr_device *pvr_dev)
+ 		return PTR_ERR(fw_code_ptr);
+ 	}
+ 
+-	if (pvr_dev->fw_dev.defs->has_fixed_data_addr()) {
++	if (pvr_dev->fw_dev.defs->has_fixed_data_addr) {
+ 		u32 base_addr = private_data->base_addr & pvr_dev->fw_dev.fw_heap_info.offset_mask;
+ 
+ 		fw_data_ptr =
+@@ -939,18 +938,22 @@ pvr_fw_validate_init_device_info(struct pvr_device *pvr_dev)
+ int
+ pvr_fw_init(struct pvr_device *pvr_dev)
+ {
++	static const struct pvr_fw_defs *fw_defs[PVR_FW_PROCESSOR_TYPE_COUNT] = {
++		[PVR_FW_PROCESSOR_TYPE_META] = &pvr_fw_defs_meta,
++		[PVR_FW_PROCESSOR_TYPE_MIPS] = &pvr_fw_defs_mips,
++		[PVR_FW_PROCESSOR_TYPE_RISCV] = &pvr_fw_defs_riscv,
++	};
++
+ 	u32 kccb_size_log2 = ROGUE_FWIF_KCCB_NUMCMDS_LOG2_DEFAULT;
+ 	u32 kccb_rtn_size = (1 << kccb_size_log2) * sizeof(*pvr_dev->kccb.rtn);
+ 	struct pvr_fw_device *fw_dev = &pvr_dev->fw_dev;
+ 	int err;
+ 
+-	if (fw_dev->processor_type == PVR_FW_PROCESSOR_TYPE_META)
+-		fw_dev->defs = &pvr_fw_defs_meta;
+-	else if (fw_dev->processor_type == PVR_FW_PROCESSOR_TYPE_MIPS)
+-		fw_dev->defs = &pvr_fw_defs_mips;
+-	else
++	if (fw_dev->processor_type >= PVR_FW_PROCESSOR_TYPE_COUNT)
+ 		return -EINVAL;
+ 
++	fw_dev->defs = fw_defs[fw_dev->processor_type];
++
+ 	err = fw_dev->defs->init(pvr_dev);
+ 	if (err)
+ 		return err;
+@@ -1456,6 +1459,15 @@ void pvr_fw_object_get_fw_addr_offset(struct pvr_fw_object *fw_obj, u32 offset,
+ 	*fw_addr_out = pvr_dev->fw_dev.defs->get_fw_addr_with_offset(fw_obj, offset);
+ }
+ 
++u64
++pvr_fw_obj_get_gpu_addr(struct pvr_fw_object *fw_obj)
++{
++	struct pvr_device *pvr_dev = to_pvr_device(gem_from_pvr_gem(fw_obj->gem)->dev);
++	struct pvr_fw_device *fw_dev = &pvr_dev->fw_dev;
++
++	return fw_dev->fw_heap_info.gpu_addr + fw_obj->fw_addr_offset;
++}
++
+ /*
+  * pvr_fw_hard_reset() - Re-initialise the FW code and data segments, and reset all global FW
+  *                       structures
+diff --git a/drivers/gpu/drm/imagination/pvr_fw.h b/drivers/gpu/drm/imagination/pvr_fw.h
+index b7966bd57..1404dd492 100644
+--- a/drivers/gpu/drm/imagination/pvr_fw.h
++++ b/drivers/gpu/drm/imagination/pvr_fw.h
+@@ -167,47 +167,30 @@ struct pvr_fw_defs {
+ 	int (*wrapper_init)(struct pvr_device *pvr_dev);
+ 
+ 	/**
+-	 * @has_fixed_data_addr:
++	 * @irq_pending: Check interrupt status register for pending interrupts.
+ 	 *
+-	 * Called to check if firmware fixed data must be loaded at the address given by the
+-	 * firmware layout table.
++	 * @pvr_dev: Target PowerVR device.
+ 	 *
+ 	 * This function is mandatory.
++	 */
++	bool (*irq_pending)(struct pvr_device *pvr_dev);
++
++	/**
++	 * @irq_clear: Clear pending interrupts.
+ 	 *
+-	 * Returns:
+-	 *  * %true if firmware fixed data must be loaded at the address given by the firmware
+-	 *    layout table.
+-	 *  * %false otherwise.
++	 * @pvr_dev: Target PowerVR device.
++	 *
++	 * This function is mandatory.
+ 	 */
+-	bool (*has_fixed_data_addr)(void);
++	void (*irq_clear)(struct pvr_device *pvr_dev);
+ 
+ 	/**
+-	 * @irq: FW Interrupt information.
++	 * @has_fixed_data_addr: Specify whether the firmware fixed data must be loaded at the
++	 *                       address given by the firmware layout table.
+ 	 *
+-	 * Those are processor dependent, and should be initialized by the
+-	 * processor backend in pvr_fw_funcs::init().
++	 * This value is mandatory.
+ 	 */
+-	struct {
+-		/** @enable_reg: FW interrupt enable register. */
+-		u32 enable_reg;
+-
+-		/** @status_reg: FW interrupt status register. */
+-		u32 status_reg;
+-
+-		/**
+-		 * @clear_reg: FW interrupt clear register.
+-		 *
+-		 * If @status_reg == @clear_reg, we clear by write a bit to zero,
+-		 * otherwise we clear by writing a bit to one.
+-		 */
+-		u32 clear_reg;
+-
+-		/** @event_mask: Bitmask of events to listen for. */
+-		u32 event_mask;
+-
+-		/** @clear_mask: Value to write to the clear_reg in order to clear FW IRQs. */
+-		u32 clear_mask;
+-	} irq;
++	bool has_fixed_data_addr;
+ };
+ 
+ /**
+@@ -400,26 +383,16 @@ struct pvr_fw_device {
+ 	} fw_objs;
+ };
+ 
+-#define pvr_fw_irq_read_reg(pvr_dev, name) \
+-	pvr_cr_read32((pvr_dev), (pvr_dev)->fw_dev.defs->irq.name ## _reg)
+-
+-#define pvr_fw_irq_write_reg(pvr_dev, name, value) \
+-	pvr_cr_write32((pvr_dev), (pvr_dev)->fw_dev.defs->irq.name ## _reg, value)
+-
+-#define pvr_fw_irq_pending(pvr_dev) \
+-	(pvr_fw_irq_read_reg(pvr_dev, status) & (pvr_dev)->fw_dev.defs->irq.event_mask)
+-
+-#define pvr_fw_irq_clear(pvr_dev) \
+-	pvr_fw_irq_write_reg(pvr_dev, clear, (pvr_dev)->fw_dev.defs->irq.clear_mask)
+-
+-#define pvr_fw_irq_enable(pvr_dev) \
+-	pvr_fw_irq_write_reg(pvr_dev, enable, (pvr_dev)->fw_dev.defs->irq.event_mask)
+-
+-#define pvr_fw_irq_disable(pvr_dev) \
+-	pvr_fw_irq_write_reg(pvr_dev, enable, 0)
++enum pvr_fw_processor_type {
++	PVR_FW_PROCESSOR_TYPE_META = 0,
++	PVR_FW_PROCESSOR_TYPE_MIPS,
++	PVR_FW_PROCESSOR_TYPE_RISCV,
++	PVR_FW_PROCESSOR_TYPE_COUNT,
++};
+ 
+ extern const struct pvr_fw_defs pvr_fw_defs_meta;
+ extern const struct pvr_fw_defs pvr_fw_defs_mips;
++extern const struct pvr_fw_defs pvr_fw_defs_riscv;
+ 
+ int pvr_fw_validate_init_device_info(struct pvr_device *pvr_dev);
+ int pvr_fw_init(struct pvr_device *pvr_dev);
+@@ -506,4 +479,18 @@ pvr_fw_object_get_fw_addr(struct pvr_fw_object *fw_obj, u32 *fw_addr_out)
+ 	pvr_fw_object_get_fw_addr_offset(fw_obj, 0, fw_addr_out);
+ }
+ 
++u64
++pvr_fw_obj_get_gpu_addr(struct pvr_fw_object *fw_obj);
++
++static __always_inline size_t
++pvr_fw_obj_get_object_size(struct pvr_fw_object *fw_obj)
++{
++	return pvr_gem_object_size(fw_obj->gem);
++}
++
++/* Util functions defined in pvr_fw_util.c. These are intended for use in pvr_fw_<arch>.c files. */
++int
++pvr_fw_process_elf_command_stream(struct pvr_device *pvr_dev, const u8 *fw, u8 *fw_code_ptr,
++				  u8 *fw_data_ptr, u8 *fw_core_code_ptr, u8 *fw_core_data_ptr);
++
+ #endif /* PVR_FW_H */
+diff --git a/drivers/gpu/drm/imagination/pvr_fw_meta.c b/drivers/gpu/drm/imagination/pvr_fw_meta.c
+index 6d1386485..60db3668a 100644
+--- a/drivers/gpu/drm/imagination/pvr_fw_meta.c
++++ b/drivers/gpu/drm/imagination/pvr_fw_meta.c
+@@ -370,13 +370,12 @@ configure_seg_mmu(struct pvr_device *pvr_dev, u32 **boot_conf_ptr)
+ 	const struct pvr_fw_layout_entry *layout_entries = pvr_dev->fw_dev.layout_entries;
+ 	u32 num_layout_entries = pvr_dev->fw_dev.header->layout_entry_num;
+ 	u64 seg_out_addr_top;
+-	u32 i;
+ 
+ 	seg_out_addr_top =
+ 		ROGUE_FW_SEGMMU_OUTADDR_TOP_SLC(MMU_CONTEXT_MAPPING_FWPRIV,
+ 						ROGUE_FW_SEGMMU_META_BIFDM_ID);
+ 
+-	for (i = 0; i < num_layout_entries; i++) {
++	for (u32 i = 0; i < num_layout_entries; i++) {
+ 		/*
+ 		 * FW code is using the bootloader segment which is already
+ 		 * configured on boot. FW coremem code and data don't use the
+@@ -534,9 +533,17 @@ pvr_meta_vm_unmap(struct pvr_device *pvr_dev, struct pvr_fw_object *fw_obj)
+ }
+ 
+ static bool
+-pvr_meta_has_fixed_data_addr(void)
++pvr_meta_irq_pending(struct pvr_device *pvr_dev)
+ {
+-	return false;
++	return pvr_cr_read32(pvr_dev, ROGUE_CR_META_SP_MSLVIRQSTATUS) &
++	       ROGUE_CR_META_SP_MSLVIRQSTATUS_TRIGVECT2_EN;
++}
++
++static void
++pvr_meta_irq_clear(struct pvr_device *pvr_dev)
++{
++	pvr_cr_write32(pvr_dev, ROGUE_CR_META_SP_MSLVIRQSTATUS,
++		       ROGUE_CR_META_SP_MSLVIRQSTATUS_TRIGVECT2_CLRMSK);
+ }
+ 
+ const struct pvr_fw_defs pvr_fw_defs_meta = {
+@@ -546,12 +553,7 @@ const struct pvr_fw_defs pvr_fw_defs_meta = {
+ 	.vm_unmap = pvr_meta_vm_unmap,
+ 	.get_fw_addr_with_offset = pvr_meta_get_fw_addr_with_offset,
+ 	.wrapper_init = pvr_meta_wrapper_init,
+-	.has_fixed_data_addr = pvr_meta_has_fixed_data_addr,
+-	.irq = {
+-		.enable_reg = ROGUE_CR_META_SP_MSLVIRQENABLE,
+-		.status_reg = ROGUE_CR_META_SP_MSLVIRQSTATUS,
+-		.clear_reg = ROGUE_CR_META_SP_MSLVIRQSTATUS,
+-		.event_mask = ROGUE_CR_META_SP_MSLVIRQSTATUS_TRIGVECT2_EN,
+-		.clear_mask = ROGUE_CR_META_SP_MSLVIRQSTATUS_TRIGVECT2_CLRMSK,
+-	},
++	.irq_pending = pvr_meta_irq_pending,
++	.irq_clear = pvr_meta_irq_clear,
++	.has_fixed_data_addr = false,
+ };
+diff --git a/drivers/gpu/drm/imagination/pvr_fw_mips.c b/drivers/gpu/drm/imagination/pvr_fw_mips.c
+index 0bed0257e..6914fc46d 100644
+--- a/drivers/gpu/drm/imagination/pvr_fw_mips.c
++++ b/drivers/gpu/drm/imagination/pvr_fw_mips.c
+@@ -8,7 +8,6 @@
+ #include "pvr_rogue_mips.h"
+ #include "pvr_vm_mips.h"
+ 
+-#include <linux/elf.h>
+ #include <linux/err.h>
+ #include <linux/types.h>
+ 
+@@ -16,60 +15,6 @@
+ #define ROGUE_FW_HEAP_MIPS_SHIFT 24 /* 16 MB */
+ #define ROGUE_FW_HEAP_MIPS_RESERVED_SIZE SZ_1M
+ 
+-/**
+- * process_elf_command_stream() - Process ELF firmware image and populate
+- *                                firmware sections
+- * @pvr_dev: Device pointer.
+- * @fw: Pointer to firmware image.
+- * @fw_code_ptr: Pointer to FW code section.
+- * @fw_data_ptr: Pointer to FW data section.
+- * @fw_core_code_ptr: Pointer to FW coremem code section.
+- * @fw_core_data_ptr: Pointer to FW coremem data section.
+- *
+- * Returns :
+- *  * 0 on success, or
+- *  * -EINVAL on any error in ELF command stream.
+- */
+-static int
+-process_elf_command_stream(struct pvr_device *pvr_dev, const u8 *fw, u8 *fw_code_ptr,
+-			   u8 *fw_data_ptr, u8 *fw_core_code_ptr, u8 *fw_core_data_ptr)
+-{
+-	struct elf32_hdr *header = (struct elf32_hdr *)fw;
+-	struct elf32_phdr *program_header = (struct elf32_phdr *)(fw + header->e_phoff);
+-	struct drm_device *drm_dev = from_pvr_device(pvr_dev);
+-	u32 entry;
+-	int err;
+-
+-	for (entry = 0; entry < header->e_phnum; entry++, program_header++) {
+-		void *write_addr;
+-
+-		/* Only consider loadable entries in the ELF segment table */
+-		if (program_header->p_type != PT_LOAD)
+-			continue;
+-
+-		err = pvr_fw_find_mmu_segment(pvr_dev, program_header->p_vaddr,
+-					      program_header->p_memsz, fw_code_ptr, fw_data_ptr,
+-					      fw_core_code_ptr, fw_core_data_ptr, &write_addr);
+-		if (err) {
+-			drm_err(drm_dev,
+-				"Addr 0x%x (size: %d) not found in any firmware segment",
+-				program_header->p_vaddr, program_header->p_memsz);
+-			return err;
+-		}
+-
+-		/* Write to FW allocation only if available */
+-		if (write_addr) {
+-			memcpy(write_addr, fw + program_header->p_offset,
+-			       program_header->p_filesz);
+-
+-			memset((u8 *)write_addr + program_header->p_filesz, 0,
+-			       program_header->p_memsz - program_header->p_filesz);
+-		}
+-	}
+-
+-	return 0;
+-}
+-
+ static int
+ pvr_mips_init(struct pvr_device *pvr_dev)
+ {
+@@ -97,11 +42,10 @@ pvr_mips_fw_process(struct pvr_device *pvr_dev, const u8 *fw,
+ 	const struct pvr_fw_layout_entry *stack_entry;
+ 	struct rogue_mipsfw_boot_data *boot_data;
+ 	dma_addr_t dma_addr;
+-	u32 page_nr;
+ 	int err;
+ 
+-	err = process_elf_command_stream(pvr_dev, fw, fw_code_ptr, fw_data_ptr, fw_core_code_ptr,
+-					 fw_core_data_ptr);
++	err = pvr_fw_process_elf_command_stream(pvr_dev, fw, fw_code_ptr, fw_data_ptr,
++						fw_core_code_ptr, fw_core_data_ptr);
+ 	if (err)
+ 		return err;
+ 
+@@ -132,7 +76,7 @@ pvr_mips_fw_process(struct pvr_device *pvr_dev, const u8 *fw,
+ 
+ 	boot_data->reg_base = pvr_dev->regs_resource->start;
+ 
+-	for (page_nr = 0; page_nr < ARRAY_SIZE(boot_data->pt_phys_addr); page_nr++) {
++	for (u32 page_nr = 0; page_nr < ARRAY_SIZE(boot_data->pt_phys_addr); page_nr++) {
+ 		/* Firmware expects 4k pages, but host page size might be different. */
+ 		u32 src_page_nr = (page_nr * ROGUE_MIPSFW_PAGE_SIZE_4K) >> PAGE_SHIFT;
+ 		u32 page_offset = (page_nr * ROGUE_MIPSFW_PAGE_SIZE_4K) & ~PAGE_MASK;
+@@ -228,9 +172,17 @@ pvr_mips_get_fw_addr_with_offset(struct pvr_fw_object *fw_obj, u32 offset)
+ }
+ 
+ static bool
+-pvr_mips_has_fixed_data_addr(void)
++pvr_mips_irq_pending(struct pvr_device *pvr_dev)
++{
++	return pvr_cr_read32(pvr_dev, ROGUE_CR_MIPS_WRAPPER_IRQ_STATUS) &
++	       ROGUE_CR_MIPS_WRAPPER_IRQ_STATUS_EVENT_EN;
++}
++
++static void
++pvr_mips_irq_clear(struct pvr_device *pvr_dev)
+ {
+-	return true;
++	pvr_cr_write32(pvr_dev, ROGUE_CR_MIPS_WRAPPER_IRQ_CLEAR,
++		       ROGUE_CR_MIPS_WRAPPER_IRQ_CLEAR_EVENT_EN);
+ }
+ 
+ const struct pvr_fw_defs pvr_fw_defs_mips = {
+@@ -241,12 +193,7 @@ const struct pvr_fw_defs pvr_fw_defs_mips = {
+ 	.vm_unmap = pvr_vm_mips_unmap,
+ 	.get_fw_addr_with_offset = pvr_mips_get_fw_addr_with_offset,
+ 	.wrapper_init = pvr_mips_wrapper_init,
+-	.has_fixed_data_addr = pvr_mips_has_fixed_data_addr,
+-	.irq = {
+-		.enable_reg = ROGUE_CR_MIPS_WRAPPER_IRQ_ENABLE,
+-		.status_reg = ROGUE_CR_MIPS_WRAPPER_IRQ_STATUS,
+-		.clear_reg = ROGUE_CR_MIPS_WRAPPER_IRQ_CLEAR,
+-		.event_mask = ROGUE_CR_MIPS_WRAPPER_IRQ_STATUS_EVENT_EN,
+-		.clear_mask = ROGUE_CR_MIPS_WRAPPER_IRQ_CLEAR_EVENT_EN,
+-	},
++	.irq_pending = pvr_mips_irq_pending,
++	.irq_clear = pvr_mips_irq_clear,
++	.has_fixed_data_addr = true,
+ };
+diff --git a/drivers/gpu/drm/imagination/pvr_fw_riscv.c b/drivers/gpu/drm/imagination/pvr_fw_riscv.c
+new file mode 100644
+index 000000000..fc13d483b
+--- /dev/null
++++ b/drivers/gpu/drm/imagination/pvr_fw_riscv.c
+@@ -0,0 +1,165 @@
++// SPDX-License-Identifier: GPL-2.0 OR MIT
++/* Copyright (c) 2024 Imagination Technologies Ltd. */
++
++#include "pvr_device.h"
++#include "pvr_fw.h"
++#include "pvr_fw_info.h"
++#include "pvr_fw_mips.h"
++#include "pvr_gem.h"
++#include "pvr_rogue_cr_defs.h"
++#include "pvr_rogue_riscv.h"
++#include "pvr_vm.h"
++
++#include <linux/compiler.h>
++#include <linux/delay.h>
++#include <linux/firmware.h>
++#include <linux/ktime.h>
++#include <linux/types.h>
++
++#define ROGUE_FW_HEAP_RISCV_SHIFT 25 /* 32 MB */
++#define ROGUE_FW_HEAP_RISCV_SIZE (1u << ROGUE_FW_HEAP_RISCV_SHIFT)
++
++static int
++pvr_riscv_wrapper_init(struct pvr_device *pvr_dev)
++{
++	const u64 common_opts =
++		((u64)(ROGUE_FW_HEAP_RISCV_SIZE >> FWCORE_ADDR_REMAP_CONFIG0_SIZE_ALIGNSHIFT)
++		 << ROGUE_CR_FWCORE_ADDR_REMAP_CONFIG0_SIZE_SHIFT) |
++		((u64)MMU_CONTEXT_MAPPING_FWPRIV
++		 << FWCORE_ADDR_REMAP_CONFIG0_MMU_CONTEXT_SHIFT);
++
++	u64 code_addr = pvr_fw_obj_get_gpu_addr(pvr_dev->fw_dev.mem.code_obj);
++	u64 data_addr = pvr_fw_obj_get_gpu_addr(pvr_dev->fw_dev.mem.data_obj);
++
++	/* This condition allows us to OR the addresses into the register directly. */
++	static_assert(ROGUE_CR_FWCORE_ADDR_REMAP_CONFIG1_DEVVADDR_SHIFT ==
++		      ROGUE_CR_FWCORE_ADDR_REMAP_CONFIG1_DEVVADDR_ALIGNSHIFT);
++
++	WARN_ON(code_addr & ROGUE_CR_FWCORE_ADDR_REMAP_CONFIG1_DEVVADDR_CLRMSK);
++	WARN_ON(data_addr & ROGUE_CR_FWCORE_ADDR_REMAP_CONFIG1_DEVVADDR_CLRMSK);
++
++	pvr_cr_write64(pvr_dev, ROGUE_RISCVFW_REGION_REMAP_CR(BOOTLDR_CODE),
++		       code_addr | common_opts | ROGUE_CR_FWCORE_ADDR_REMAP_CONFIG0_FETCH_EN_EN);
++
++	pvr_cr_write64(pvr_dev, ROGUE_RISCVFW_REGION_REMAP_CR(BOOTLDR_DATA),
++		       data_addr | common_opts |
++			       ROGUE_CR_FWCORE_ADDR_REMAP_CONFIG0_LOAD_STORE_EN_EN);
++
++	/* Garten IDLE bit controlled by RISC-V. */
++	pvr_cr_write64(pvr_dev, ROGUE_CR_MTS_GARTEN_WRAPPER_CONFIG,
++		       ROGUE_CR_MTS_GARTEN_WRAPPER_CONFIG_IDLE_CTRL_META);
++
++	return 0;
++}
++
++struct rogue_riscv_fw_boot_data {
++	u64 coremem_code_dev_vaddr;
++	u64 coremem_data_dev_vaddr;
++	u32 coremem_code_fw_addr;
++	u32 coremem_data_fw_addr;
++	u32 coremem_code_size;
++	u32 coremem_data_size;
++	u32 flags;
++	u32 reserved;
++};
++
++static int
++pvr_riscv_fw_process(struct pvr_device *pvr_dev, const u8 *fw,
++		     u8 *fw_code_ptr, u8 *fw_data_ptr, u8 *fw_core_code_ptr, u8 *fw_core_data_ptr,
++		     u32 core_code_alloc_size)
++{
++	struct pvr_fw_device *fw_dev = &pvr_dev->fw_dev;
++	struct pvr_fw_mem *fw_mem = &fw_dev->mem;
++	struct rogue_riscv_fw_boot_data *boot_data;
++	int err;
++
++	err = pvr_fw_process_elf_command_stream(pvr_dev, fw, fw_code_ptr, fw_data_ptr,
++						fw_core_code_ptr, fw_core_data_ptr);
++	if (err)
++		goto err_out;
++
++	boot_data = (struct rogue_riscv_fw_boot_data *)fw_data_ptr;
++
++	if (fw_mem->core_code_obj) {
++		boot_data->coremem_code_dev_vaddr = pvr_fw_obj_get_gpu_addr(fw_mem->core_code_obj);
++		pvr_fw_object_get_fw_addr(fw_mem->core_code_obj, &boot_data->coremem_code_fw_addr);
++		boot_data->coremem_code_size = pvr_fw_obj_get_object_size(fw_mem->core_code_obj);
++	}
++
++	if (fw_mem->core_data_obj) {
++		boot_data->coremem_data_dev_vaddr = pvr_fw_obj_get_gpu_addr(fw_mem->core_data_obj);
++		pvr_fw_object_get_fw_addr(fw_mem->core_data_obj, &boot_data->coremem_data_fw_addr);
++		boot_data->coremem_data_size = pvr_fw_obj_get_object_size(fw_mem->core_data_obj);
++	}
++
++	return 0;
++
++err_out:
++	return err;
++}
++
++static int
++pvr_riscv_init(struct pvr_device *pvr_dev)
++{
++	pvr_fw_heap_info_init(pvr_dev, ROGUE_FW_HEAP_RISCV_SHIFT, 0);
++
++	return 0;
++}
++
++static u32
++pvr_riscv_get_fw_addr_with_offset(struct pvr_fw_object *fw_obj, u32 offset)
++{
++	u32 fw_addr = fw_obj->fw_addr_offset + offset;
++
++	/* RISC-V cacheability is determined by address. */
++	if (fw_obj->gem->flags & PVR_BO_FW_FLAGS_DEVICE_UNCACHED)
++		fw_addr |= ROGUE_RISCVFW_REGION_BASE(SHARED_UNCACHED_DATA);
++	else
++		fw_addr |= ROGUE_RISCVFW_REGION_BASE(SHARED_CACHED_DATA);
++
++	return fw_addr;
++}
++
++static int
++pvr_riscv_vm_map(struct pvr_device *pvr_dev, struct pvr_fw_object *fw_obj)
++{
++	struct pvr_gem_object *pvr_obj = fw_obj->gem;
++
++	return pvr_vm_map(pvr_dev->kernel_vm_ctx, pvr_obj, 0, fw_obj->fw_mm_node.start,
++			  pvr_gem_object_size(pvr_obj));
++}
++
++static void
++pvr_riscv_vm_unmap(struct pvr_device *pvr_dev, struct pvr_fw_object *fw_obj)
++{
++	struct pvr_gem_object *pvr_obj = fw_obj->gem;
++
++	pvr_vm_unmap_obj(pvr_dev->kernel_vm_ctx, pvr_obj,
++			 fw_obj->fw_mm_node.start, fw_obj->fw_mm_node.size);
++}
++
++static bool
++pvr_riscv_irq_pending(struct pvr_device *pvr_dev)
++{
++	return pvr_cr_read32(pvr_dev, ROGUE_CR_IRQ_OS0_EVENT_STATUS) &
++	       ROGUE_CR_IRQ_OS0_EVENT_STATUS_SOURCE_EN;
++}
++
++static void
++pvr_riscv_irq_clear(struct pvr_device *pvr_dev)
++{
++	pvr_cr_write32(pvr_dev, ROGUE_CR_IRQ_OS0_EVENT_CLEAR,
++		       ROGUE_CR_IRQ_OS0_EVENT_CLEAR_SOURCE_EN);
++}
++
++const struct pvr_fw_defs pvr_fw_defs_riscv = {
++	.init = pvr_riscv_init,
++	.fw_process = pvr_riscv_fw_process,
++	.vm_map = pvr_riscv_vm_map,
++	.vm_unmap = pvr_riscv_vm_unmap,
++	.get_fw_addr_with_offset = pvr_riscv_get_fw_addr_with_offset,
++	.wrapper_init = pvr_riscv_wrapper_init,
++	.irq_pending = pvr_riscv_irq_pending,
++	.irq_clear = pvr_riscv_irq_clear,
++	.has_fixed_data_addr = false,
++};
+diff --git a/drivers/gpu/drm/imagination/pvr_fw_startstop.c b/drivers/gpu/drm/imagination/pvr_fw_startstop.c
+index 36cec227c..dcbb9903e 100644
+--- a/drivers/gpu/drm/imagination/pvr_fw_startstop.c
++++ b/drivers/gpu/drm/imagination/pvr_fw_startstop.c
+@@ -49,6 +49,14 @@ rogue_bif_init(struct pvr_device *pvr_dev)
+ 
+ 	pvr_cr_write64(pvr_dev, BIF_CAT_BASEX(MMU_CONTEXT_MAPPING_FWPRIV),
+ 		       pc_addr);
++
++	if (pvr_dev->fw_dev.processor_type == PVR_FW_PROCESSOR_TYPE_RISCV) {
++		pc_addr = (((u64)pc_dma_addr >> ROGUE_CR_FWCORE_MEM_CAT_BASE0_ADDR_ALIGNSHIFT)
++			   << ROGUE_CR_FWCORE_MEM_CAT_BASE0_ADDR_SHIFT) &
++			  ~ROGUE_CR_FWCORE_MEM_CAT_BASE0_ADDR_CLRMSK;
++
++		pvr_cr_write64(pvr_dev, FWCORE_MEM_CAT_BASEX(MMU_CONTEXT_MAPPING_FWPRIV), pc_addr);
++	}
+ }
+ 
+ static int
+@@ -114,6 +122,9 @@ pvr_fw_start(struct pvr_device *pvr_dev)
+ 		(void)pvr_cr_read32(pvr_dev, ROGUE_CR_SYS_BUS_SECURE); /* Fence write */
+ 	}
+ 
++	if (pvr_dev->fw_dev.processor_type == PVR_FW_PROCESSOR_TYPE_RISCV)
++		pvr_cr_write32(pvr_dev, ROGUE_CR_FWCORE_BOOT, 0);
++
+ 	/* Set Rogue in soft-reset. */
+ 	pvr_cr_write64(pvr_dev, ROGUE_CR_SOFT_RESET, soft_reset_mask);
+ 	if (has_reset2)
+@@ -167,6 +178,12 @@ pvr_fw_start(struct pvr_device *pvr_dev)
+ 	/* ... and afterwards. */
+ 	udelay(3);
+ 
++	if (pvr_dev->fw_dev.processor_type == PVR_FW_PROCESSOR_TYPE_RISCV) {
++		/* Boot the FW. */
++		pvr_cr_write32(pvr_dev, ROGUE_CR_FWCORE_BOOT, 1);
++		udelay(3);
++	}
++
+ 	return 0;
+ 
+ err_reset:
+diff --git a/drivers/gpu/drm/imagination/pvr_fw_trace.c b/drivers/gpu/drm/imagination/pvr_fw_trace.c
+index 634c84bfc..e7f455451 100644
+--- a/drivers/gpu/drm/imagination/pvr_fw_trace.c
++++ b/drivers/gpu/drm/imagination/pvr_fw_trace.c
+@@ -21,7 +21,6 @@ tracebuf_ctrl_init(void *cpu_ptr, void *priv)
+ {
+ 	struct rogue_fwif_tracebuf *tracebuf_ctrl = cpu_ptr;
+ 	struct pvr_fw_trace *fw_trace = priv;
+-	u32 thread_nr;
+ 
+ 	tracebuf_ctrl->tracebuf_size_in_dwords = ROGUE_FW_TRACE_BUF_DEFAULT_SIZE_IN_DWORDS;
+ 	tracebuf_ctrl->tracebuf_flags = 0;
+@@ -31,7 +30,7 @@ tracebuf_ctrl_init(void *cpu_ptr, void *priv)
+ 	else
+ 		tracebuf_ctrl->log_type = ROGUE_FWIF_LOG_TYPE_NONE;
+ 
+-	for (thread_nr = 0; thread_nr < ARRAY_SIZE(fw_trace->buffers); thread_nr++) {
++	for (u32 thread_nr = 0; thread_nr < ARRAY_SIZE(fw_trace->buffers); thread_nr++) {
+ 		struct rogue_fwif_tracebuf_space *tracebuf_space =
+ 			&tracebuf_ctrl->tracebuf[thread_nr];
+ 		struct pvr_fw_trace_buffer *trace_buffer = &fw_trace->buffers[thread_nr];
+@@ -48,10 +47,9 @@ int pvr_fw_trace_init(struct pvr_device *pvr_dev)
+ {
+ 	struct pvr_fw_trace *fw_trace = &pvr_dev->fw_dev.fw_trace;
+ 	struct drm_device *drm_dev = from_pvr_device(pvr_dev);
+-	u32 thread_nr;
+ 	int err;
+ 
+-	for (thread_nr = 0; thread_nr < ARRAY_SIZE(fw_trace->buffers); thread_nr++) {
++	for (u32 thread_nr = 0; thread_nr < ARRAY_SIZE(fw_trace->buffers); thread_nr++) {
+ 		struct pvr_fw_trace_buffer *trace_buffer = &fw_trace->buffers[thread_nr];
+ 
+ 		trace_buffer->buf =
+@@ -88,7 +86,7 @@ int pvr_fw_trace_init(struct pvr_device *pvr_dev)
+ 	BUILD_BUG_ON(ARRAY_SIZE(fw_trace->tracebuf_ctrl->tracebuf) !=
+ 		     ARRAY_SIZE(fw_trace->buffers));
+ 
+-	for (thread_nr = 0; thread_nr < ARRAY_SIZE(fw_trace->buffers); thread_nr++) {
++	for (u32 thread_nr = 0; thread_nr < ARRAY_SIZE(fw_trace->buffers); thread_nr++) {
+ 		struct rogue_fwif_tracebuf_space *tracebuf_space =
+ 			&fw_trace->tracebuf_ctrl->tracebuf[thread_nr];
+ 		struct pvr_fw_trace_buffer *trace_buffer = &fw_trace->buffers[thread_nr];
+@@ -99,7 +97,7 @@ int pvr_fw_trace_init(struct pvr_device *pvr_dev)
+ 	return 0;
+ 
+ err_free_buf:
+-	for (thread_nr = 0; thread_nr < ARRAY_SIZE(fw_trace->buffers); thread_nr++) {
++	for (u32 thread_nr = 0; thread_nr < ARRAY_SIZE(fw_trace->buffers); thread_nr++) {
+ 		struct pvr_fw_trace_buffer *trace_buffer = &fw_trace->buffers[thread_nr];
+ 
+ 		if (trace_buffer->buf)
+@@ -112,9 +110,8 @@ int pvr_fw_trace_init(struct pvr_device *pvr_dev)
+ void pvr_fw_trace_fini(struct pvr_device *pvr_dev)
+ {
+ 	struct pvr_fw_trace *fw_trace = &pvr_dev->fw_dev.fw_trace;
+-	u32 thread_nr;
+ 
+-	for (thread_nr = 0; thread_nr < ARRAY_SIZE(fw_trace->buffers); thread_nr++) {
++	for (u32 thread_nr = 0; thread_nr < ARRAY_SIZE(fw_trace->buffers); thread_nr++) {
+ 		struct pvr_fw_trace_buffer *trace_buffer = &fw_trace->buffers[thread_nr];
+ 
+ 		pvr_fw_object_unmap_and_destroy(trace_buffer->buf_obj);
+@@ -122,8 +119,6 @@ void pvr_fw_trace_fini(struct pvr_device *pvr_dev)
+ 	pvr_fw_object_unmap_and_destroy(fw_trace->tracebuf_ctrl_obj);
+ }
+ 
+-#if defined(CONFIG_DEBUG_FS)
+-
+ /**
+  * update_logtype() - Send KCCB command to trigger FW to update logtype
+  * @pvr_dev: Target PowerVR device
+@@ -190,9 +185,7 @@ struct pvr_fw_trace_seq_data {
+ 
+ static u32 find_sfid(u32 id)
+ {
+-	u32 i;
+-
+-	for (i = 0; i < ARRAY_SIZE(stid_fmts); i++) {
++	for (u32 i = 0; i < ARRAY_SIZE(stid_fmts); i++) {
+ 		if (stid_fmts[i].id == id)
+ 			return i;
+ 	}
+@@ -291,12 +284,11 @@ static void fw_trace_get_first(struct pvr_fw_trace_seq_data *trace_seq_data)
+ static void *fw_trace_seq_start(struct seq_file *s, loff_t *pos)
+ {
+ 	struct pvr_fw_trace_seq_data *trace_seq_data = s->private;
+-	u32 i;
+ 
+ 	/* Reset trace index, then advance to *pos. */
+ 	fw_trace_get_first(trace_seq_data);
+ 
+-	for (i = 0; i < *pos; i++) {
++	for (u32 i = 0; i < *pos; i++) {
+ 		if (!fw_trace_get_next(trace_seq_data))
+ 			return NULL;
+ 	}
+@@ -453,7 +445,7 @@ static const struct file_operations pvr_fw_trace_fops = {
+ void
+ pvr_fw_trace_mask_update(struct pvr_device *pvr_dev, u32 old_mask, u32 new_mask)
+ {
+-	if (old_mask != new_mask)
++	if (IS_ENABLED(CONFIG_DEBUG_FS) && old_mask != new_mask)
+ 		update_logtype(pvr_dev, new_mask);
+ }
+ 
+@@ -461,12 +453,14 @@ void
+ pvr_fw_trace_debugfs_init(struct pvr_device *pvr_dev, struct dentry *dir)
+ {
+ 	struct pvr_fw_trace *fw_trace = &pvr_dev->fw_dev.fw_trace;
+-	u32 thread_nr;
++
++	if (!IS_ENABLED(CONFIG_DEBUG_FS))
++		return;
+ 
+ 	static_assert(ARRAY_SIZE(fw_trace->buffers) <= 10,
+ 		      "The filename buffer is only large enough for a single-digit thread count");
+ 
+-	for (thread_nr = 0; thread_nr < ARRAY_SIZE(fw_trace->buffers); ++thread_nr) {
++	for (u32 thread_nr = 0; thread_nr < ARRAY_SIZE(fw_trace->buffers); ++thread_nr) {
+ 		char filename[8];
+ 
+ 		snprintf(filename, ARRAY_SIZE(filename), "trace_%u", thread_nr);
+@@ -475,4 +469,3 @@ pvr_fw_trace_debugfs_init(struct pvr_device *pvr_dev, struct dentry *dir)
+ 				    &pvr_fw_trace_fops);
+ 	}
+ }
+-#endif
+diff --git a/drivers/gpu/drm/imagination/pvr_fw_trace.h b/drivers/gpu/drm/imagination/pvr_fw_trace.h
+index 0074d2b18..1d0ef9374 100644
+--- a/drivers/gpu/drm/imagination/pvr_fw_trace.h
++++ b/drivers/gpu/drm/imagination/pvr_fw_trace.h
+@@ -65,7 +65,6 @@ struct pvr_fw_trace {
+ int pvr_fw_trace_init(struct pvr_device *pvr_dev);
+ void pvr_fw_trace_fini(struct pvr_device *pvr_dev);
+ 
+-#if defined(CONFIG_DEBUG_FS)
+ /* Forward declaration from <linux/dcache.h>. */
+ struct dentry;
+ 
+@@ -73,6 +72,5 @@ void pvr_fw_trace_mask_update(struct pvr_device *pvr_dev, u32 old_mask,
+ 			      u32 new_mask);
+ 
+ void pvr_fw_trace_debugfs_init(struct pvr_device *pvr_dev, struct dentry *dir);
+-#endif /* defined(CONFIG_DEBUG_FS) */
+ 
+ #endif /* PVR_FW_TRACE_H */
+diff --git a/drivers/gpu/drm/imagination/pvr_fw_util.c b/drivers/gpu/drm/imagination/pvr_fw_util.c
+new file mode 100644
+index 000000000..377fe72d8
+--- /dev/null
++++ b/drivers/gpu/drm/imagination/pvr_fw_util.c
+@@ -0,0 +1,66 @@
++// SPDX-License-Identifier: GPL-2.0-only OR MIT
++/* Copyright (c) 2024 Imagination Technologies Ltd. */
++
++#include "pvr_device.h"
++#include "pvr_fw.h"
++
++#include <drm/drm_device.h>
++#include <drm/drm_print.h>
++
++#include <linux/elf.h>
++#include <linux/string.h>
++#include <linux/types.h>
++
++/**
++ * pvr_fw_process_elf_command_stream() - Process ELF firmware image and populate
++ *                                       firmware sections
++ * @pvr_dev: Device pointer.
++ * @fw: Pointer to firmware image.
++ * @fw_code_ptr: Pointer to FW code section.
++ * @fw_data_ptr: Pointer to FW data section.
++ * @fw_core_code_ptr: Pointer to FW coremem code section.
++ * @fw_core_data_ptr: Pointer to FW coremem data section.
++ *
++ * Returns :
++ *  * 0 on success, or
++ *  * -EINVAL on any error in ELF command stream.
++ */
++int
++pvr_fw_process_elf_command_stream(struct pvr_device *pvr_dev, const u8 *fw,
++				  u8 *fw_code_ptr, u8 *fw_data_ptr,
++				  u8 *fw_core_code_ptr, u8 *fw_core_data_ptr)
++{
++	struct elf32_hdr *header = (struct elf32_hdr *)fw;
++	struct elf32_phdr *program_header = (struct elf32_phdr *)(fw + header->e_phoff);
++	struct drm_device *drm_dev = from_pvr_device(pvr_dev);
++	int err;
++
++	for (u32 entry = 0; entry < header->e_phnum; entry++, program_header++) {
++		void *write_addr;
++
++		/* Only consider loadable entries in the ELF segment table */
++		if (program_header->p_type != PT_LOAD)
++			continue;
++
++		err = pvr_fw_find_mmu_segment(pvr_dev, program_header->p_vaddr,
++					      program_header->p_memsz, fw_code_ptr, fw_data_ptr,
++					      fw_core_code_ptr, fw_core_data_ptr, &write_addr);
++		if (err) {
++			drm_err(drm_dev,
++				"Addr 0x%x (size: %d) not found in any firmware segment",
++				program_header->p_vaddr, program_header->p_memsz);
++			return err;
++		}
++
++		/* Write to FW allocation only if available */
++		if (write_addr) {
++			memcpy(write_addr, fw + program_header->p_offset,
++			       program_header->p_filesz);
++
++			memset((u8 *)write_addr + program_header->p_filesz, 0,
++			       program_header->p_memsz - program_header->p_filesz);
++		}
++	}
++
++	return 0;
++}
+diff --git a/drivers/gpu/drm/imagination/pvr_gem.c b/drivers/gpu/drm/imagination/pvr_gem.c
+index 59e7bbe64..c07c9a915 100644
+--- a/drivers/gpu/drm/imagination/pvr_gem.c
++++ b/drivers/gpu/drm/imagination/pvr_gem.c
+@@ -19,6 +19,7 @@
+ #include <linux/log2.h>
+ #include <linux/mutex.h>
+ #include <linux/pagemap.h>
++#include <linux/property.h>
+ #include <linux/refcount.h>
+ #include <linux/scatterlist.h>
+ 
+@@ -87,8 +88,6 @@ pvr_gem_object_flags_validate(u64 flags)
+ 		 DRM_PVR_BO_ALLOW_CPU_USERSPACE_ACCESS),
+ 	};
+ 
+-	int i;
+-
+ 	/*
+ 	 * Check for bits set in undefined regions. Reserved regions refer to
+ 	 * options that can only be set by the kernel. These are explicitly
+@@ -102,7 +101,7 @@ pvr_gem_object_flags_validate(u64 flags)
+ 	 * Check for all combinations of flags marked as invalid in the array
+ 	 * above.
+ 	 */
+-	for (i = 0; i < ARRAY_SIZE(invalid_combinations); ++i) {
++	for (int i = 0; i < ARRAY_SIZE(invalid_combinations); ++i) {
+ 		u64 combo = invalid_combinations[i];
+ 
+ 		if ((flags & combo) == combo)
+@@ -214,7 +213,7 @@ pvr_gem_object_vmap(struct pvr_gem_object *pvr_obj)
+ 
+ 	dma_resv_lock(obj->resv, NULL);
+ 
+-	err = drm_gem_shmem_vmap(shmem_obj, &map);
++	err = drm_gem_shmem_vmap_locked(shmem_obj, &map);
+ 	if (err)
+ 		goto err_unlock;
+ 
+@@ -268,7 +267,7 @@ pvr_gem_object_vunmap(struct pvr_gem_object *pvr_obj)
+ 			dma_sync_sgtable_for_device(dev, shmem_obj->sgt, DMA_BIDIRECTIONAL);
+ 	}
+ 
+-	drm_gem_shmem_vunmap(shmem_obj, &map);
++	drm_gem_shmem_vunmap_locked(shmem_obj, &map);
+ 
+ 	dma_resv_unlock(obj->resv);
+ }
+@@ -347,6 +346,7 @@ struct drm_gem_object *pvr_gem_create_object(struct drm_device *drm_dev, size_t
+ struct pvr_gem_object *
+ pvr_gem_object_create(struct pvr_device *pvr_dev, size_t size, u64 flags)
+ {
++	struct drm_device *drm_dev = from_pvr_device(pvr_dev);
+ 	struct drm_gem_shmem_object *shmem_obj;
+ 	struct pvr_gem_object *pvr_obj;
+ 	struct sg_table *sgt;
+@@ -356,7 +356,10 @@ pvr_gem_object_create(struct pvr_device *pvr_dev, size_t size, u64 flags)
+ 	if (size == 0 || !pvr_gem_object_flags_validate(flags))
+ 		return ERR_PTR(-EINVAL);
+ 
+-	shmem_obj = drm_gem_shmem_create(from_pvr_device(pvr_dev), size);
++	if (device_get_dma_attr(drm_dev->dev) == DEV_DMA_COHERENT)
++		flags |= PVR_BO_CPU_CACHED;
++
++	shmem_obj = drm_gem_shmem_create(drm_dev, size);
+ 	if (IS_ERR(shmem_obj))
+ 		return ERR_CAST(shmem_obj);
+ 
+@@ -371,8 +374,7 @@ pvr_gem_object_create(struct pvr_device *pvr_dev, size_t size, u64 flags)
+ 		goto err_shmem_object_free;
+ 	}
+ 
+-	dma_sync_sgtable_for_device(shmem_obj->base.dev->dev, sgt,
+-				    DMA_BIDIRECTIONAL);
++	dma_sync_sgtable_for_device(drm_dev->dev, sgt, DMA_BIDIRECTIONAL);
+ 
+ 	/*
+ 	 * Do this last because pvr_gem_object_zero() requires a fully
+diff --git a/drivers/gpu/drm/imagination/pvr_gem.h b/drivers/gpu/drm/imagination/pvr_gem.h
+index e0e5ea509..c99f30cc6 100644
+--- a/drivers/gpu/drm/imagination/pvr_gem.h
++++ b/drivers/gpu/drm/imagination/pvr_gem.h
+@@ -44,8 +44,10 @@ struct pvr_file;
+  * Bits not defined anywhere are "undefined".
+  *
+  * CPU mapping options
+- *    :PVR_BO_CPU_CACHED: By default, all GEM objects are mapped write-combined on the CPU. Set this
+- *       flag to override this behaviour and map the object cached.
++ *    :PVR_BO_CPU_CACHED: By default, all GEM objects are mapped write-combined on the CPU. Set
++ *       this flag to override this behaviour and map the object cached. If the dma_coherent
++ *       property is present in devicetree, all allocations will be mapped as if this flag was set.
++ *       This does not require any additional consideration at allocation time.
+  *
+  * Firmware options
+  *    :PVR_BO_FW_NO_CLEAR_ON_RESET: By default, all FW objects are cleared and reinitialised on hard
+diff --git a/drivers/gpu/drm/imagination/pvr_hwrt.c b/drivers/gpu/drm/imagination/pvr_hwrt.c
+index 54f88d6c0..dc0c25fa1 100644
+--- a/drivers/gpu/drm/imagination/pvr_hwrt.c
++++ b/drivers/gpu/drm/imagination/pvr_hwrt.c
+@@ -44,13 +44,12 @@ hwrt_init_kernel_structure(struct pvr_file *pvr_file,
+ {
+ 	struct pvr_device *pvr_dev = pvr_file->pvr_dev;
+ 	int err;
+-	int i;
+ 
+ 	hwrt->pvr_dev = pvr_dev;
+ 	hwrt->max_rts = args->layers;
+ 
+ 	/* Get pointers to the free lists */
+-	for (i = 0; i < ARRAY_SIZE(hwrt->free_lists); i++) {
++	for (int i = 0; i < ARRAY_SIZE(hwrt->free_lists); i++) {
+ 		hwrt->free_lists[i] = pvr_free_list_lookup(pvr_file,  args->free_list_handles[i]);
+ 		if (!hwrt->free_lists[i]) {
+ 			err = -EINVAL;
+@@ -67,7 +66,7 @@ hwrt_init_kernel_structure(struct pvr_file *pvr_file,
+ 	return 0;
+ 
+ err_put_free_lists:
+-	for (i = 0; i < ARRAY_SIZE(hwrt->free_lists); i++) {
++	for (int i = 0; i < ARRAY_SIZE(hwrt->free_lists); i++) {
+ 		pvr_free_list_put(hwrt->free_lists[i]);
+ 		hwrt->free_lists[i] = NULL;
+ 	}
+@@ -78,9 +77,7 @@ hwrt_init_kernel_structure(struct pvr_file *pvr_file,
+ static void
+ hwrt_fini_kernel_structure(struct pvr_hwrt_dataset *hwrt)
+ {
+-	int i;
+-
+-	for (i = 0; i < ARRAY_SIZE(hwrt->free_lists); i++) {
++	for (int i = 0; i < ARRAY_SIZE(hwrt->free_lists); i++) {
+ 		pvr_free_list_put(hwrt->free_lists[i]);
+ 		hwrt->free_lists[i] = NULL;
+ 	}
+@@ -363,13 +360,12 @@ hwrt_data_init_fw_structure(struct pvr_file *pvr_file,
+ 	struct drm_pvr_create_hwrt_geom_data_args *geom_data_args = &args->geom_data_args;
+ 	struct pvr_device *pvr_dev = pvr_file->pvr_dev;
+ 	struct rogue_fwif_rta_ctl *rta_ctl;
+-	int free_list_i;
+ 	int err;
+ 
+ 	pvr_fw_object_get_fw_addr(hwrt->common_fw_obj,
+ 				  &hwrt_data->data.hwrt_data_common_fw_addr);
+ 
+-	for (free_list_i = 0; free_list_i < ARRAY_SIZE(hwrt->free_lists); free_list_i++) {
++	for (int free_list_i = 0; free_list_i < ARRAY_SIZE(hwrt->free_lists); free_list_i++) {
+ 		pvr_fw_object_get_fw_addr(hwrt->free_lists[free_list_i]->fw_obj,
+ 					  &hwrt_data->data.freelists_fw_addr[free_list_i]);
+ 	}
+diff --git a/drivers/gpu/drm/imagination/pvr_job.c b/drivers/gpu/drm/imagination/pvr_job.c
+index ab2f43b99..7564b0f21 100644
+--- a/drivers/gpu/drm/imagination/pvr_job.c
++++ b/drivers/gpu/drm/imagination/pvr_job.c
+@@ -90,20 +90,13 @@ static int pvr_fw_cmd_init(struct pvr_device *pvr_dev, struct pvr_job *job,
+ 	void *stream;
+ 	int err;
+ 
+-	stream = kzalloc(stream_len, GFP_KERNEL);
+-	if (!stream)
+-		return -ENOMEM;
+-
+-	if (copy_from_user(stream, u64_to_user_ptr(stream_userptr), stream_len)) {
+-		err = -EFAULT;
+-		goto err_free_stream;
+-	}
++	stream = memdup_user(u64_to_user_ptr(stream_userptr), stream_len);
++	if (IS_ERR(stream))
++		return PTR_ERR(stream);
+ 
+ 	err = pvr_job_process_stream(pvr_dev, stream_def, stream, stream_len, job);
+ 
+-err_free_stream:
+ 	kfree(stream);
+-
+ 	return err;
+ }
+ 
+@@ -604,8 +597,6 @@ update_job_resvs_for_each(struct pvr_job_data *job_data, u32 job_count)
+ static bool can_combine_jobs(struct pvr_job *a, struct pvr_job *b)
+ {
+ 	struct pvr_job *geom_job = a, *frag_job = b;
+-	struct dma_fence *fence;
+-	unsigned long index;
+ 
+ 	/* Geometry and fragment jobs can be combined if they are queued to the
+ 	 * same context and targeting the same HWRT.
+@@ -616,13 +607,9 @@ static bool can_combine_jobs(struct pvr_job *a, struct pvr_job *b)
+ 	    a->hwrt != b->hwrt)
+ 		return false;
+ 
+-	xa_for_each(&frag_job->base.dependencies, index, fence) {
+-		/* We combine when we see an explicit geom -> frag dep. */
+-		if (&geom_job->base.s_fence->scheduled == fence)
+-			return true;
+-	}
+-
+-	return false;
++	/* We combine when we see an explicit geom -> frag dep. */
++	return drm_sched_job_has_dependency(&frag_job->base,
++					    &geom_job->base.s_fence->scheduled);
+ }
+ 
+ static struct dma_fence *
+diff --git a/drivers/gpu/drm/imagination/pvr_mmu.c b/drivers/gpu/drm/imagination/pvr_mmu.c
+index c22c160e9..88b00ed2d 100644
+--- a/drivers/gpu/drm/imagination/pvr_mmu.c
++++ b/drivers/gpu/drm/imagination/pvr_mmu.c
+@@ -18,6 +18,7 @@
+ #include <linux/dma-mapping.h>
+ #include <linux/kmemleak.h>
+ #include <linux/minmax.h>
++#include <linux/property.h>
+ #include <linux/sizes.h>
+ 
+ #define PVR_SHIFT_FROM_SIZE(size_) (__builtin_ctzll(size_))
+@@ -260,6 +261,7 @@ pvr_mmu_backing_page_init(struct pvr_mmu_backing_page *page,
+ 	struct device *dev = from_pvr_device(pvr_dev)->dev;
+ 
+ 	struct page *raw_page;
++	pgprot_t prot;
+ 	int err;
+ 
+ 	dma_addr_t dma_addr;
+@@ -269,7 +271,11 @@ pvr_mmu_backing_page_init(struct pvr_mmu_backing_page *page,
+ 	if (!raw_page)
+ 		return -ENOMEM;
+ 
+-	host_ptr = vmap(&raw_page, 1, VM_MAP, pgprot_writecombine(PAGE_KERNEL));
++	prot = PAGE_KERNEL;
++	if (device_get_dma_attr(dev) != DEV_DMA_COHERENT)
++		prot = pgprot_writecombine(prot);
++
++	host_ptr = vmap(&raw_page, 1, VM_MAP, prot);
+ 	if (!host_ptr) {
+ 		err = -ENOMEM;
+ 		goto err_free_page;
+diff --git a/drivers/gpu/drm/imagination/pvr_power.c b/drivers/gpu/drm/imagination/pvr_power.c
+index 077d26517..a79944579 100644
+--- a/drivers/gpu/drm/imagination/pvr_power.c
++++ b/drivers/gpu/drm/imagination/pvr_power.c
+@@ -10,11 +10,16 @@
+ 
+ #include <drm/drm_drv.h>
+ #include <drm/drm_managed.h>
++#include <linux/cleanup.h>
+ #include <linux/clk.h>
+ #include <linux/interrupt.h>
+ #include <linux/mutex.h>
++#include <linux/of.h>
+ #include <linux/platform_device.h>
++#include <linux/pm_domain.h>
+ #include <linux/pm_runtime.h>
++#include <linux/pwrseq/consumer.h>
++#include <linux/reset.h>
+ #include <linux/timer.h>
+ #include <linux/types.h>
+ #include <linux/workqueue.h>
+@@ -235,6 +240,118 @@ pvr_watchdog_init(struct pvr_device *pvr_dev)
+ 	return 0;
+ }
+ 
++static int pvr_power_init_manual(struct pvr_device *pvr_dev)
++{
++	struct drm_device *drm_dev = from_pvr_device(pvr_dev);
++	struct reset_control *reset;
++
++	reset = devm_reset_control_get_optional_exclusive(drm_dev->dev, NULL);
++	if (IS_ERR(reset))
++		return dev_err_probe(drm_dev->dev, PTR_ERR(reset),
++				     "failed to get gpu reset line\n");
++
++	pvr_dev->reset = reset;
++
++	return 0;
++}
++
++static int pvr_power_on_sequence_manual(struct pvr_device *pvr_dev)
++{
++	int err;
++
++	err = clk_prepare_enable(pvr_dev->core_clk);
++	if (err)
++		return err;
++
++	err = clk_prepare_enable(pvr_dev->sys_clk);
++	if (err)
++		goto err_core_clk_disable;
++
++	err = clk_prepare_enable(pvr_dev->mem_clk);
++	if (err)
++		goto err_sys_clk_disable;
++
++	/*
++	 * According to the hardware manual, a delay of at least 32 clock
++	 * cycles is required between de-asserting the clkgen reset and
++	 * de-asserting the GPU reset. Assuming a worst-case scenario with
++	 * a very high GPU clock frequency, a delay of 1 microsecond is
++	 * sufficient to ensure this requirement is met across all
++	 * feasible GPU clock speeds.
++	 */
++	udelay(1);
++
++	err = reset_control_deassert(pvr_dev->reset);
++	if (err)
++		goto err_mem_clk_disable;
++
++	return 0;
++
++err_mem_clk_disable:
++	clk_disable_unprepare(pvr_dev->mem_clk);
++
++err_sys_clk_disable:
++	clk_disable_unprepare(pvr_dev->sys_clk);
++
++err_core_clk_disable:
++	clk_disable_unprepare(pvr_dev->core_clk);
++
++	return err;
++}
++
++static int pvr_power_off_sequence_manual(struct pvr_device *pvr_dev)
++{
++	int err;
++
++	err = reset_control_assert(pvr_dev->reset);
++
++	clk_disable_unprepare(pvr_dev->mem_clk);
++	clk_disable_unprepare(pvr_dev->sys_clk);
++	clk_disable_unprepare(pvr_dev->core_clk);
++
++	return err;
++}
++
++const struct pvr_power_sequence_ops pvr_power_sequence_ops_manual = {
++	.init = pvr_power_init_manual,
++	.power_on = pvr_power_on_sequence_manual,
++	.power_off = pvr_power_off_sequence_manual,
++};
++
++static int pvr_power_init_pwrseq(struct pvr_device *pvr_dev)
++{
++	struct device *dev = from_pvr_device(pvr_dev)->dev;
++
++	pvr_dev->pwrseq = devm_pwrseq_get(dev, "gpu-power");
++	if (IS_ERR(pvr_dev->pwrseq)) {
++		/*
++		 * This platform requires a sequencer. If we can't get it, we
++		 * must return the error (including -EPROBE_DEFER to wait for
++		 * the provider to appear)
++		 */
++		return dev_err_probe(dev, PTR_ERR(pvr_dev->pwrseq),
++				     "Failed to get required power sequencer\n");
++	}
++
++	return 0;
++}
++
++static int pvr_power_on_sequence_pwrseq(struct pvr_device *pvr_dev)
++{
++	return pwrseq_power_on(pvr_dev->pwrseq);
++}
++
++static int pvr_power_off_sequence_pwrseq(struct pvr_device *pvr_dev)
++{
++	return pwrseq_power_off(pvr_dev->pwrseq);
++}
++
++const struct pvr_power_sequence_ops pvr_power_sequence_ops_pwrseq = {
++	.init = pvr_power_init_pwrseq,
++	.power_on = pvr_power_on_sequence_pwrseq,
++	.power_off = pvr_power_off_sequence_pwrseq,
++};
++
+ int
+ pvr_power_device_suspend(struct device *dev)
+ {
+@@ -253,9 +370,7 @@ pvr_power_device_suspend(struct device *dev)
+ 			goto err_drm_dev_exit;
+ 	}
+ 
+-	clk_disable_unprepare(pvr_dev->mem_clk);
+-	clk_disable_unprepare(pvr_dev->sys_clk);
+-	clk_disable_unprepare(pvr_dev->core_clk);
++	err = pvr_dev->device_data->pwr_ops->power_off(pvr_dev);
+ 
+ err_drm_dev_exit:
+ 	drm_dev_exit(idx);
+@@ -275,36 +390,22 @@ pvr_power_device_resume(struct device *dev)
+ 	if (!drm_dev_enter(drm_dev, &idx))
+ 		return -EIO;
+ 
+-	err = clk_prepare_enable(pvr_dev->core_clk);
++	err = pvr_dev->device_data->pwr_ops->power_on(pvr_dev);
+ 	if (err)
+ 		goto err_drm_dev_exit;
+ 
+-	err = clk_prepare_enable(pvr_dev->sys_clk);
+-	if (err)
+-		goto err_core_clk_disable;
+-
+-	err = clk_prepare_enable(pvr_dev->mem_clk);
+-	if (err)
+-		goto err_sys_clk_disable;
+-
+ 	if (pvr_dev->fw_dev.booted) {
+ 		err = pvr_power_fw_enable(pvr_dev);
+ 		if (err)
+-			goto err_mem_clk_disable;
++			goto err_power_off;
+ 	}
+ 
+ 	drm_dev_exit(idx);
+ 
+ 	return 0;
+ 
+-err_mem_clk_disable:
+-	clk_disable_unprepare(pvr_dev->mem_clk);
+-
+-err_sys_clk_disable:
+-	clk_disable_unprepare(pvr_dev->sys_clk);
+-
+-err_core_clk_disable:
+-	clk_disable_unprepare(pvr_dev->core_clk);
++err_power_off:
++	pvr_dev->device_data->pwr_ops->power_off(pvr_dev);
+ 
+ err_drm_dev_exit:
+ 	drm_dev_exit(idx);
+@@ -502,3 +603,114 @@ pvr_watchdog_fini(struct pvr_device *pvr_dev)
+ {
+ 	cancel_delayed_work_sync(&pvr_dev->watchdog.work);
+ }
++
++int pvr_power_domains_init(struct pvr_device *pvr_dev)
++{
++	struct device *dev = from_pvr_device(pvr_dev)->dev;
++
++	struct device_link **domain_links __free(kfree) = NULL;
++	struct device **domain_devs __free(kfree) = NULL;
++	int domain_count;
++	int link_count;
++
++	char dev_name[2] = "a";
++	int err;
++	int i;
++
++	domain_count = of_count_phandle_with_args(dev->of_node, "power-domains",
++						  "#power-domain-cells");
++	if (domain_count < 0)
++		return domain_count;
++
++	if (domain_count <= 1)
++		return 0;
++
++	link_count = domain_count + (domain_count - 1);
++
++	domain_devs = kcalloc(domain_count, sizeof(*domain_devs), GFP_KERNEL);
++	if (!domain_devs)
++		return -ENOMEM;
++
++	domain_links = kcalloc(link_count, sizeof(*domain_links), GFP_KERNEL);
++	if (!domain_links)
++		return -ENOMEM;
++
++	for (i = 0; i < domain_count; i++) {
++		struct device *domain_dev;
++
++		dev_name[0] = 'a' + i;
++		domain_dev = dev_pm_domain_attach_by_name(dev, dev_name);
++		if (IS_ERR_OR_NULL(domain_dev)) {
++			err = domain_dev ? PTR_ERR(domain_dev) : -ENODEV;
++			goto err_detach;
++		}
++
++		domain_devs[i] = domain_dev;
++	}
++
++	for (i = 0; i < domain_count; i++) {
++		struct device_link *link;
++
++		link = device_link_add(dev, domain_devs[i], DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME);
++		if (!link) {
++			err = -ENODEV;
++			goto err_unlink;
++		}
++
++		domain_links[i] = link;
++	}
++
++	for (i = domain_count; i < link_count; i++) {
++		struct device_link *link;
++
++		link = device_link_add(domain_devs[i - domain_count + 1],
++				       domain_devs[i - domain_count],
++				       DL_FLAG_STATELESS | DL_FLAG_PM_RUNTIME);
++		if (!link) {
++			err = -ENODEV;
++			goto err_unlink;
++		}
++
++		domain_links[i] = link;
++	}
++
++	pvr_dev->power = (struct pvr_device_power){
++		.domain_devs = no_free_ptr(domain_devs),
++		.domain_links = no_free_ptr(domain_links),
++		.domain_count = domain_count,
++	};
++
++	return 0;
++
++err_unlink:
++	while (--i >= 0)
++		device_link_del(domain_links[i]);
++
++	i = domain_count;
++
++err_detach:
++	while (--i >= 0)
++		dev_pm_domain_detach(domain_devs[i], true);
++
++	return err;
++}
++
++void pvr_power_domains_fini(struct pvr_device *pvr_dev)
++{
++	const int domain_count = pvr_dev->power.domain_count;
++
++	int i = domain_count + (domain_count - 1);
++
++	while (--i >= 0)
++		device_link_del(pvr_dev->power.domain_links[i]);
++
++	i = domain_count;
++
++	while (--i >= 0)
++		dev_pm_domain_detach(pvr_dev->power.domain_devs[i], true);
++
++	kfree(pvr_dev->power.domain_links);
++	kfree(pvr_dev->power.domain_devs);
++
++	pvr_dev->power = (struct pvr_device_power){ 0 };
++}
+diff --git a/drivers/gpu/drm/imagination/pvr_power.h b/drivers/gpu/drm/imagination/pvr_power.h
+index 9a9312dcb..b853d0922 100644
+--- a/drivers/gpu/drm/imagination/pvr_power.h
++++ b/drivers/gpu/drm/imagination/pvr_power.h
+@@ -38,4 +38,22 @@ pvr_power_put(struct pvr_device *pvr_dev)
+ 	return pm_runtime_put(drm_dev->dev);
+ }
+ 
++int pvr_power_domains_init(struct pvr_device *pvr_dev);
++void pvr_power_domains_fini(struct pvr_device *pvr_dev);
++
++/**
++ * struct pvr_power_sequence_ops - Platform specific power sequence operations.
++ * @init: Pointer to the platform-specific initialization function.
++ * @power_on: Pointer to the platform-specific power on function.
++ * @power_off: Pointer to the platform-specific power off function.
++ */
++struct pvr_power_sequence_ops {
++	int (*init)(struct pvr_device *pvr_dev);
++	int (*power_on)(struct pvr_device *pvr_dev);
++	int (*power_off)(struct pvr_device *pvr_dev);
++};
++
++extern const struct pvr_power_sequence_ops pvr_power_sequence_ops_manual;
++extern const struct pvr_power_sequence_ops pvr_power_sequence_ops_pwrseq;
++
+ #endif /* PVR_POWER_H */
+diff --git a/drivers/gpu/drm/imagination/pvr_queue.c b/drivers/gpu/drm/imagination/pvr_queue.c
+index b660b85b5..7497bca2e 100644
+--- a/drivers/gpu/drm/imagination/pvr_queue.c
++++ b/drivers/gpu/drm/imagination/pvr_queue.c
+@@ -807,7 +807,7 @@ static void pvr_queue_start(struct pvr_queue *queue)
+ 		}
+ 	}
+ 
+-	drm_sched_start(&queue->scheduler);
++	drm_sched_start(&queue->scheduler, 0);
+ }
+ 
+ /**
+@@ -818,7 +818,9 @@ static void pvr_queue_start(struct pvr_queue *queue)
+  * the scheduler, and re-assign parent fences in the middle.
+  *
+  * Return:
+- *  * DRM_GPU_SCHED_STAT_NOMINAL.
++ *  *%DRM_GPU_SCHED_STAT_NO_HANG if the job fence has already been
++ *   signaled, or
++ *  *%DRM_GPU_SCHED_STAT_RESET otherwise.
+  */
+ static enum drm_gpu_sched_stat
+ pvr_queue_timedout_job(struct drm_sched_job *s_job)
+@@ -829,6 +831,9 @@ pvr_queue_timedout_job(struct drm_sched_job *s_job)
+ 	struct pvr_job *job;
+ 	u32 job_count = 0;
+ 
++	if (dma_fence_is_signaled(s_job->s_fence->parent))
++		return DRM_GPU_SCHED_STAT_NO_HANG;
++
+ 	dev_err(sched->dev, "Job timeout\n");
+ 
+ 	/* Before we stop the scheduler, make sure the queue is out of any list, so
+@@ -867,9 +872,9 @@ pvr_queue_timedout_job(struct drm_sched_job *s_job)
+ 	}
+ 	mutex_unlock(&pvr_dev->queues.lock);
+ 
+-	drm_sched_start(sched);
++	drm_sched_start(sched, 0);
+ 
+-	return DRM_GPU_SCHED_STAT_NOMINAL;
++	return DRM_GPU_SCHED_STAT_RESET;
+ }
+ 
+ /**
+diff --git a/drivers/gpu/drm/imagination/pvr_rogue_cr_defs.h b/drivers/gpu/drm/imagination/pvr_rogue_cr_defs.h
+index 2a90d0279..790c97f80 100644
+--- a/drivers/gpu/drm/imagination/pvr_rogue_cr_defs.h
++++ b/drivers/gpu/drm/imagination/pvr_rogue_cr_defs.h
+@@ -827,6 +827,120 @@
+ #define ROGUE_CR_EVENT_STATUS_TLA_COMPLETE_CLRMSK 0xFFFFFFFEU
+ #define ROGUE_CR_EVENT_STATUS_TLA_COMPLETE_EN 0x00000001U
+ 
++/* Register ROGUE_CR_EVENT_CLEAR */
++#define ROGUE_CR_EVENT_CLEAR 0x0138U
++#define ROGUE_CR_EVENT_CLEAR__ROGUEXE__MASKFULL 0x00000000E01DFFFFULL
++#define ROGUE_CR_EVENT_CLEAR__SIGNALS__MASKFULL 0x00000000E007FFFFULL
++#define ROGUE_CR_EVENT_CLEAR_MASKFULL 0x00000000FFFFFFFFULL
++#define ROGUE_CR_EVENT_CLEAR_TDM_FENCE_FINISHED_SHIFT 31U
++#define ROGUE_CR_EVENT_CLEAR_TDM_FENCE_FINISHED_CLRMSK 0x7FFFFFFFU
++#define ROGUE_CR_EVENT_CLEAR_TDM_FENCE_FINISHED_EN 0x80000000U
++#define ROGUE_CR_EVENT_CLEAR_TDM_BUFFER_STALL_SHIFT 30U
++#define ROGUE_CR_EVENT_CLEAR_TDM_BUFFER_STALL_CLRMSK 0xBFFFFFFFU
++#define ROGUE_CR_EVENT_CLEAR_TDM_BUFFER_STALL_EN 0x40000000U
++#define ROGUE_CR_EVENT_CLEAR_COMPUTE_SIGNAL_FAILURE_SHIFT 29U
++#define ROGUE_CR_EVENT_CLEAR_COMPUTE_SIGNAL_FAILURE_CLRMSK 0xDFFFFFFFU
++#define ROGUE_CR_EVENT_CLEAR_COMPUTE_SIGNAL_FAILURE_EN 0x20000000U
++#define ROGUE_CR_EVENT_CLEAR_DPX_OUT_OF_MEMORY_SHIFT 28U
++#define ROGUE_CR_EVENT_CLEAR_DPX_OUT_OF_MEMORY_CLRMSK 0xEFFFFFFFU
++#define ROGUE_CR_EVENT_CLEAR_DPX_OUT_OF_MEMORY_EN 0x10000000U
++#define ROGUE_CR_EVENT_CLEAR_DPX_MMU_PAGE_FAULT_SHIFT 27U
++#define ROGUE_CR_EVENT_CLEAR_DPX_MMU_PAGE_FAULT_CLRMSK 0xF7FFFFFFU
++#define ROGUE_CR_EVENT_CLEAR_DPX_MMU_PAGE_FAULT_EN 0x08000000U
++#define ROGUE_CR_EVENT_CLEAR_RPM_OUT_OF_MEMORY_SHIFT 26U
++#define ROGUE_CR_EVENT_CLEAR_RPM_OUT_OF_MEMORY_CLRMSK 0xFBFFFFFFU
++#define ROGUE_CR_EVENT_CLEAR_RPM_OUT_OF_MEMORY_EN 0x04000000U
++#define ROGUE_CR_EVENT_CLEAR_FBA_FC3_FINISHED_SHIFT 25U
++#define ROGUE_CR_EVENT_CLEAR_FBA_FC3_FINISHED_CLRMSK 0xFDFFFFFFU
++#define ROGUE_CR_EVENT_CLEAR_FBA_FC3_FINISHED_EN 0x02000000U
++#define ROGUE_CR_EVENT_CLEAR_FBA_FC2_FINISHED_SHIFT 24U
++#define ROGUE_CR_EVENT_CLEAR_FBA_FC2_FINISHED_CLRMSK 0xFEFFFFFFU
++#define ROGUE_CR_EVENT_CLEAR_FBA_FC2_FINISHED_EN 0x01000000U
++#define ROGUE_CR_EVENT_CLEAR_FBA_FC1_FINISHED_SHIFT 23U
++#define ROGUE_CR_EVENT_CLEAR_FBA_FC1_FINISHED_CLRMSK 0xFF7FFFFFU
++#define ROGUE_CR_EVENT_CLEAR_FBA_FC1_FINISHED_EN 0x00800000U
++#define ROGUE_CR_EVENT_CLEAR_FBA_FC0_FINISHED_SHIFT 22U
++#define ROGUE_CR_EVENT_CLEAR_FBA_FC0_FINISHED_CLRMSK 0xFFBFFFFFU
++#define ROGUE_CR_EVENT_CLEAR_FBA_FC0_FINISHED_EN 0x00400000U
++#define ROGUE_CR_EVENT_CLEAR_RDM_FC3_FINISHED_SHIFT 21U
++#define ROGUE_CR_EVENT_CLEAR_RDM_FC3_FINISHED_CLRMSK 0xFFDFFFFFU
++#define ROGUE_CR_EVENT_CLEAR_RDM_FC3_FINISHED_EN 0x00200000U
++#define ROGUE_CR_EVENT_CLEAR_RDM_FC2_FINISHED_SHIFT 20U
++#define ROGUE_CR_EVENT_CLEAR_RDM_FC2_FINISHED_CLRMSK 0xFFEFFFFFU
++#define ROGUE_CR_EVENT_CLEAR_RDM_FC2_FINISHED_EN 0x00100000U
++#define ROGUE_CR_EVENT_CLEAR_SAFETY_SHIFT 20U
++#define ROGUE_CR_EVENT_CLEAR_SAFETY_CLRMSK 0xFFEFFFFFU
++#define ROGUE_CR_EVENT_CLEAR_SAFETY_EN 0x00100000U
++#define ROGUE_CR_EVENT_CLEAR_RDM_FC1_FINISHED_SHIFT 19U
++#define ROGUE_CR_EVENT_CLEAR_RDM_FC1_FINISHED_CLRMSK 0xFFF7FFFFU
++#define ROGUE_CR_EVENT_CLEAR_RDM_FC1_FINISHED_EN 0x00080000U
++#define ROGUE_CR_EVENT_CLEAR_SLAVE_REQ_SHIFT 19U
++#define ROGUE_CR_EVENT_CLEAR_SLAVE_REQ_CLRMSK 0xFFF7FFFFU
++#define ROGUE_CR_EVENT_CLEAR_SLAVE_REQ_EN 0x00080000U
++#define ROGUE_CR_EVENT_CLEAR_RDM_FC0_FINISHED_SHIFT 18U
++#define ROGUE_CR_EVENT_CLEAR_RDM_FC0_FINISHED_CLRMSK 0xFFFBFFFFU
++#define ROGUE_CR_EVENT_CLEAR_RDM_FC0_FINISHED_EN 0x00040000U
++#define ROGUE_CR_EVENT_CLEAR_TDM_CONTEXT_STORE_FINISHED_SHIFT 18U
++#define ROGUE_CR_EVENT_CLEAR_TDM_CONTEXT_STORE_FINISHED_CLRMSK 0xFFFBFFFFU
++#define ROGUE_CR_EVENT_CLEAR_TDM_CONTEXT_STORE_FINISHED_EN 0x00040000U
++#define ROGUE_CR_EVENT_CLEAR_SHG_FINISHED_SHIFT 17U
++#define ROGUE_CR_EVENT_CLEAR_SHG_FINISHED_CLRMSK 0xFFFDFFFFU
++#define ROGUE_CR_EVENT_CLEAR_SHG_FINISHED_EN 0x00020000U
++#define ROGUE_CR_EVENT_CLEAR_SPFILTER_SIGNAL_UPDATE_SHIFT 17U
++#define ROGUE_CR_EVENT_CLEAR_SPFILTER_SIGNAL_UPDATE_CLRMSK 0xFFFDFFFFU
++#define ROGUE_CR_EVENT_CLEAR_SPFILTER_SIGNAL_UPDATE_EN 0x00020000U
++#define ROGUE_CR_EVENT_CLEAR_COMPUTE_BUFFER_STALL_SHIFT 16U
++#define ROGUE_CR_EVENT_CLEAR_COMPUTE_BUFFER_STALL_CLRMSK 0xFFFEFFFFU
++#define ROGUE_CR_EVENT_CLEAR_COMPUTE_BUFFER_STALL_EN 0x00010000U
++#define ROGUE_CR_EVENT_CLEAR_USC_TRIGGER_SHIFT 15U
++#define ROGUE_CR_EVENT_CLEAR_USC_TRIGGER_CLRMSK 0xFFFF7FFFU
++#define ROGUE_CR_EVENT_CLEAR_USC_TRIGGER_EN 0x00008000U
++#define ROGUE_CR_EVENT_CLEAR_ZLS_FINISHED_SHIFT 14U
++#define ROGUE_CR_EVENT_CLEAR_ZLS_FINISHED_CLRMSK 0xFFFFBFFFU
++#define ROGUE_CR_EVENT_CLEAR_ZLS_FINISHED_EN 0x00004000U
++#define ROGUE_CR_EVENT_CLEAR_GPIO_ACK_SHIFT 13U
++#define ROGUE_CR_EVENT_CLEAR_GPIO_ACK_CLRMSK 0xFFFFDFFFU
++#define ROGUE_CR_EVENT_CLEAR_GPIO_ACK_EN 0x00002000U
++#define ROGUE_CR_EVENT_CLEAR_GPIO_REQ_SHIFT 12U
++#define ROGUE_CR_EVENT_CLEAR_GPIO_REQ_CLRMSK 0xFFFFEFFFU
++#define ROGUE_CR_EVENT_CLEAR_GPIO_REQ_EN 0x00001000U
++#define ROGUE_CR_EVENT_CLEAR_POWER_ABORT_SHIFT 11U
++#define ROGUE_CR_EVENT_CLEAR_POWER_ABORT_CLRMSK 0xFFFFF7FFU
++#define ROGUE_CR_EVENT_CLEAR_POWER_ABORT_EN 0x00000800U
++#define ROGUE_CR_EVENT_CLEAR_POWER_COMPLETE_SHIFT 10U
++#define ROGUE_CR_EVENT_CLEAR_POWER_COMPLETE_CLRMSK 0xFFFFFBFFU
++#define ROGUE_CR_EVENT_CLEAR_POWER_COMPLETE_EN 0x00000400U
++#define ROGUE_CR_EVENT_CLEAR_MMU_PAGE_FAULT_SHIFT 9U
++#define ROGUE_CR_EVENT_CLEAR_MMU_PAGE_FAULT_CLRMSK 0xFFFFFDFFU
++#define ROGUE_CR_EVENT_CLEAR_MMU_PAGE_FAULT_EN 0x00000200U
++#define ROGUE_CR_EVENT_CLEAR_PM_3D_MEM_FREE_SHIFT 8U
++#define ROGUE_CR_EVENT_CLEAR_PM_3D_MEM_FREE_CLRMSK 0xFFFFFEFFU
++#define ROGUE_CR_EVENT_CLEAR_PM_3D_MEM_FREE_EN 0x00000100U
++#define ROGUE_CR_EVENT_CLEAR_PM_OUT_OF_MEMORY_SHIFT 7U
++#define ROGUE_CR_EVENT_CLEAR_PM_OUT_OF_MEMORY_CLRMSK 0xFFFFFF7FU
++#define ROGUE_CR_EVENT_CLEAR_PM_OUT_OF_MEMORY_EN 0x00000080U
++#define ROGUE_CR_EVENT_CLEAR_TA_TERMINATE_SHIFT 6U
++#define ROGUE_CR_EVENT_CLEAR_TA_TERMINATE_CLRMSK 0xFFFFFFBFU
++#define ROGUE_CR_EVENT_CLEAR_TA_TERMINATE_EN 0x00000040U
++#define ROGUE_CR_EVENT_CLEAR_TA_FINISHED_SHIFT 5U
++#define ROGUE_CR_EVENT_CLEAR_TA_FINISHED_CLRMSK 0xFFFFFFDFU
++#define ROGUE_CR_EVENT_CLEAR_TA_FINISHED_EN 0x00000020U
++#define ROGUE_CR_EVENT_CLEAR_ISP_END_MACROTILE_SHIFT 4U
++#define ROGUE_CR_EVENT_CLEAR_ISP_END_MACROTILE_CLRMSK 0xFFFFFFEFU
++#define ROGUE_CR_EVENT_CLEAR_ISP_END_MACROTILE_EN 0x00000010U
++#define ROGUE_CR_EVENT_CLEAR_PIXELBE_END_RENDER_SHIFT 3U
++#define ROGUE_CR_EVENT_CLEAR_PIXELBE_END_RENDER_CLRMSK 0xFFFFFFF7U
++#define ROGUE_CR_EVENT_CLEAR_PIXELBE_END_RENDER_EN 0x00000008U
++#define ROGUE_CR_EVENT_CLEAR_COMPUTE_FINISHED_SHIFT 2U
++#define ROGUE_CR_EVENT_CLEAR_COMPUTE_FINISHED_CLRMSK 0xFFFFFFFBU
++#define ROGUE_CR_EVENT_CLEAR_COMPUTE_FINISHED_EN 0x00000004U
++#define ROGUE_CR_EVENT_CLEAR_KERNEL_FINISHED_SHIFT 1U
++#define ROGUE_CR_EVENT_CLEAR_KERNEL_FINISHED_CLRMSK 0xFFFFFFFDU
++#define ROGUE_CR_EVENT_CLEAR_KERNEL_FINISHED_EN 0x00000002U
++#define ROGUE_CR_EVENT_CLEAR_TLA_COMPLETE_SHIFT 0U
++#define ROGUE_CR_EVENT_CLEAR_TLA_COMPLETE_CLRMSK 0xFFFFFFFEU
++#define ROGUE_CR_EVENT_CLEAR_TLA_COMPLETE_EN 0x00000001U
++
+ /* Register ROGUE_CR_TIMER */
+ #define ROGUE_CR_TIMER 0x0160U
+ #define ROGUE_CR_TIMER_MASKFULL 0x8000FFFFFFFFFFFFULL
+@@ -6031,25 +6145,6 @@
+ #define ROGUE_CR_MULTICORE_COMPUTE_CTRL_COMMON_GPU_ENABLE_SHIFT 0U
+ #define ROGUE_CR_MULTICORE_COMPUTE_CTRL_COMMON_GPU_ENABLE_CLRMSK 0xFFFFFF00U
+ 
+-/* Register ROGUE_CR_ECC_RAM_ERR_INJ */
+-#define ROGUE_CR_ECC_RAM_ERR_INJ 0xF340U
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_MASKFULL 0x000000000000001FULL
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_SLC_SIDEKICK_SHIFT 4U
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_SLC_SIDEKICK_CLRMSK 0xFFFFFFEFU
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_SLC_SIDEKICK_EN 0x00000010U
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_USC_SHIFT 3U
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_USC_CLRMSK 0xFFFFFFF7U
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_USC_EN 0x00000008U
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_TPU_MCU_L0_SHIFT 2U
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_TPU_MCU_L0_CLRMSK 0xFFFFFFFBU
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_TPU_MCU_L0_EN 0x00000004U
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_RASCAL_SHIFT 1U
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_RASCAL_CLRMSK 0xFFFFFFFDU
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_RASCAL_EN 0x00000002U
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_MARS_SHIFT 0U
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_MARS_CLRMSK 0xFFFFFFFEU
+-#define ROGUE_CR_ECC_RAM_ERR_INJ_MARS_EN 0x00000001U
+-
+ /* Register ROGUE_CR_ECC_RAM_INIT_KICK */
+ #define ROGUE_CR_ECC_RAM_INIT_KICK 0xF348U
+ #define ROGUE_CR_ECC_RAM_INIT_KICK_MASKFULL 0x000000000000001FULL
+@@ -6163,6 +6258,26 @@
+ #define ROGUE_CR_SAFETY_EVENT_CLEAR__ROGUEXE__GPU_PAGE_FAULT_CLRMSK 0xFFFFFFFEU
+ #define ROGUE_CR_SAFETY_EVENT_CLEAR__ROGUEXE__GPU_PAGE_FAULT_EN 0x00000001U
+ 
++/* Register ROGUE_CR_FAULT_FW_STATUS */
++#define ROGUE_CR_FAULT_FW_STATUS 0xF3B0U
++#define ROGUE_CR_FAULT_FW_STATUS_MASKFULL 0x0000000000010001ULL
++#define ROGUE_CR_FAULT_FW_STATUS_CPU_CORRECT_SHIFT 16U
++#define ROGUE_CR_FAULT_FW_STATUS_CPU_CORRECT_CLRMSK 0xFFFEFFFFU
++#define ROGUE_CR_FAULT_FW_STATUS_CPU_CORRECT_EN 0x00010000U
++#define ROGUE_CR_FAULT_FW_STATUS_CPU_DETECT_SHIFT 0U
++#define ROGUE_CR_FAULT_FW_STATUS_CPU_DETECT_CLRMSK 0xFFFFFFFEU
++#define ROGUE_CR_FAULT_FW_STATUS_CPU_DETECT_EN 0x00000001U
++
++/* Register ROGUE_CR_FAULT_FW_CLEAR */
++#define ROGUE_CR_FAULT_FW_CLEAR 0xF3B8U
++#define ROGUE_CR_FAULT_FW_CLEAR_MASKFULL 0x0000000000010001ULL
++#define ROGUE_CR_FAULT_FW_CLEAR_CPU_CORRECT_SHIFT 16U
++#define ROGUE_CR_FAULT_FW_CLEAR_CPU_CORRECT_CLRMSK 0xFFFEFFFFU
++#define ROGUE_CR_FAULT_FW_CLEAR_CPU_CORRECT_EN 0x00010000U
++#define ROGUE_CR_FAULT_FW_CLEAR_CPU_DETECT_SHIFT 0U
++#define ROGUE_CR_FAULT_FW_CLEAR_CPU_DETECT_CLRMSK 0xFFFFFFFEU
++#define ROGUE_CR_FAULT_FW_CLEAR_CPU_DETECT_EN 0x00000001U
++
+ /* Register ROGUE_CR_MTS_SAFETY_EVENT_ENABLE */
+ #define ROGUE_CR_MTS_SAFETY_EVENT_ENABLE__ROGUEXE 0xF3D8U
+ #define ROGUE_CR_MTS_SAFETY_EVENT_ENABLE__ROGUEXE__MASKFULL 0x000000000000007FULL
+diff --git a/drivers/gpu/drm/imagination/pvr_rogue_riscv.h b/drivers/gpu/drm/imagination/pvr_rogue_riscv.h
+new file mode 100644
+index 000000000..9a070e24f
+--- /dev/null
++++ b/drivers/gpu/drm/imagination/pvr_rogue_riscv.h
+@@ -0,0 +1,41 @@
++/* SPDX-License-Identifier: GPL-2.0 OR MIT */
++/* Copyright (c) 2024 Imagination Technologies Ltd. */
++
++#ifndef PVR_ROGUE_RISCV_H
++#define PVR_ROGUE_RISCV_H
++
++#include "pvr_rogue_cr_defs.h"
++
++#include <linux/bitops.h>
++#include <linux/sizes.h>
++#include <linux/types.h>
++
++#define ROGUE_RISCVFW_REGION_SIZE SZ_256M
++#define ROGUE_RISCVFW_REGION_SHIFT __ffs(ROGUE_RISCVFW_REGION_SIZE)
++
++enum rogue_riscvfw_region {
++	ROGUE_RISCV_REGION__RESERVED_0 = 0,
++	ROGUE_RISCV_REGION__RESERVED_1,
++	ROGUE_RISCV_REGION_SOCIF,
++	ROGUE_RISCV_REGION__RESERVED_3,
++	ROGUE_RISCV_REGION__RESERVED_4,
++	ROGUE_RISCV_REGION_BOOTLDR_DATA,
++	ROGUE_RISCV_REGION_SHARED_CACHED_DATA,
++	ROGUE_RISCV_REGION__RESERVED_7,
++	ROGUE_RISCV_REGION_COREMEM,
++	ROGUE_RISCV_REGION__RESERVED_9,
++	ROGUE_RISCV_REGION__RESERVED_A,
++	ROGUE_RISCV_REGION__RESERVED_B,
++	ROGUE_RISCV_REGION_BOOTLDR_CODE,
++	ROGUE_RISCV_REGION_SHARED_UNCACHED_DATA,
++	ROGUE_RISCV_REGION__RESERVED_E,
++	ROGUE_RISCV_REGION__RESERVED_F,
++
++	ROGUE_RISCV_REGION__COUNT,
++};
++
++#define ROGUE_RISCVFW_REGION_BASE(r) ((u32)(ROGUE_RISCV_REGION_##r) << ROGUE_RISCVFW_REGION_SHIFT)
++#define ROGUE_RISCVFW_REGION_REMAP_CR(r) \
++	(ROGUE_CR_FWCORE_ADDR_REMAP_CONFIG0 + (u32)(ROGUE_RISCV_REGION_##r) * 8U)
++
++#endif /* PVR_ROGUE_RISCV_H */
+diff --git a/drivers/gpu/drm/imagination/pvr_stream.c b/drivers/gpu/drm/imagination/pvr_stream.c
+index 975336a4f..679aa618b 100644
+--- a/drivers/gpu/drm/imagination/pvr_stream.c
++++ b/drivers/gpu/drm/imagination/pvr_stream.c
+@@ -67,9 +67,8 @@ pvr_stream_process_1(struct pvr_device *pvr_dev, const struct pvr_stream_def *st
+ 		     u8 *dest, u32 dest_size, u32 *stream_offset_out)
+ {
+ 	int err = 0;
+-	u32 i;
+ 
+-	for (i = 0; i < nr_entries; i++) {
++	for (u32 i = 0; i < nr_entries; i++) {
+ 		if (stream_def[i].offset >= dest_size) {
+ 			err = -EINVAL;
+ 			break;
+@@ -131,7 +130,6 @@ pvr_stream_process_ext_stream(struct pvr_device *pvr_dev,
+ 	u32 musthave_masks[PVR_STREAM_EXTHDR_TYPE_MAX];
+ 	u32 ext_header;
+ 	int err = 0;
+-	u32 i;
+ 
+ 	/* Copy "must have" mask from device. We clear this as we process the stream. */
+ 	memcpy(musthave_masks, pvr_dev->stream_musthave_quirks[cmd_defs->type],
+@@ -159,7 +157,7 @@ pvr_stream_process_ext_stream(struct pvr_device *pvr_dev,
+ 
+ 		musthave_masks[type] &= ~data;
+ 
+-		for (i = 0; i < header->ext_streams_num; i++) {
++		for (u32 i = 0; i < header->ext_streams_num; i++) {
+ 			const struct pvr_stream_ext_def *ext_def = &header->ext_streams[i];
+ 
+ 			if (!(ext_header & ext_def->header_mask))
+@@ -181,7 +179,7 @@ pvr_stream_process_ext_stream(struct pvr_device *pvr_dev,
+ 	 * Verify that "must have" mask is now zero. If it isn't then one of the "must have" quirks
+ 	 * for this command was not present.
+ 	 */
+-	for (i = 0; i < cmd_defs->ext_nr_headers; i++) {
++	for (u32 i = 0; i < cmd_defs->ext_nr_headers; i++) {
+ 		if (musthave_masks[i])
+ 			return -EINVAL;
+ 	}
+@@ -245,13 +243,11 @@ pvr_stream_process(struct pvr_device *pvr_dev, const struct pvr_stream_cmd_defs
+ 		if (err)
+ 			return err;
+ 	} else {
+-		u32 i;
+-
+ 		/*
+ 		 * If we don't have an extension stream then there must not be any "must have"
+ 		 * quirks for this command.
+ 		 */
+-		for (i = 0; i < cmd_defs->ext_nr_headers; i++) {
++		for (u32 i = 0; i < cmd_defs->ext_nr_headers; i++) {
+ 			if (pvr_dev->stream_musthave_quirks[cmd_defs->type][i])
+ 				return -EINVAL;
+ 		}
+diff --git a/drivers/gpu/drm/imagination/pvr_vm.c b/drivers/gpu/drm/imagination/pvr_vm.c
+index 53fa5a4cc..bc699b600 100644
+--- a/drivers/gpu/drm/imagination/pvr_vm.c
++++ b/drivers/gpu/drm/imagination/pvr_vm.c
+@@ -185,12 +185,17 @@ struct pvr_vm_bind_op {
+ static int pvr_vm_bind_op_exec(struct pvr_vm_bind_op *bind_op)
+ {
+ 	switch (bind_op->type) {
+-	case PVR_VM_BIND_TYPE_MAP:
++	case PVR_VM_BIND_TYPE_MAP: {
++		const struct drm_gpuvm_map_req map_req = {
++			.map.va.addr = bind_op->device_addr,
++			.map.va.range = bind_op->size,
++			.map.gem.obj = gem_from_pvr_gem(bind_op->pvr_obj),
++			.map.gem.offset = bind_op->offset,
++		};
++
+ 		return drm_gpuvm_sm_map(&bind_op->vm_ctx->gpuvm_mgr,
+-					bind_op, bind_op->device_addr,
+-					bind_op->size,
+-					gem_from_pvr_gem(bind_op->pvr_obj),
+-					bind_op->offset);
++					bind_op, &map_req);
++	}
+ 
+ 	case PVR_VM_BIND_TYPE_UNMAP:
+ 		return drm_gpuvm_sm_unmap(&bind_op->vm_ctx->gpuvm_mgr,
+diff --git a/drivers/gpu/drm/imagination/pvr_vm_mips.c b/drivers/gpu/drm/imagination/pvr_vm_mips.c
+index 94af85454..5847a1c92 100644
+--- a/drivers/gpu/drm/imagination/pvr_vm_mips.c
++++ b/drivers/gpu/drm/imagination/pvr_vm_mips.c
+@@ -100,10 +100,9 @@ pvr_vm_mips_fini(struct pvr_device *pvr_dev)
+ {
+ 	struct pvr_fw_device *fw_dev = &pvr_dev->fw_dev;
+ 	struct pvr_fw_mips_data *mips_data = fw_dev->processor_data.mips_data;
+-	int page_nr;
+ 
+ 	vunmap(mips_data->pt);
+-	for (page_nr = PVR_MIPS_PT_PAGE_COUNT - 1; page_nr >= 0; page_nr--) {
++	for (int page_nr = PVR_MIPS_PT_PAGE_COUNT - 1; page_nr >= 0; page_nr--) {
+ 		dma_unmap_page(from_pvr_device(pvr_dev)->dev,
+ 			       mips_data->pt_dma_addr[page_nr], PAGE_SIZE, DMA_TO_DEVICE);
+ 
+diff --git a/drivers/gpu/drm/tidss/Kconfig b/drivers/gpu/drm/tidss/Kconfig
+index 2385c5649..31ad582b7 100644
+--- a/drivers/gpu/drm/tidss/Kconfig
++++ b/drivers/gpu/drm/tidss/Kconfig
+@@ -2,6 +2,7 @@ config DRM_TIDSS
+ 	tristate "DRM Support for TI Keystone"
+ 	depends on DRM && OF
+ 	depends on ARM || ARM64 || COMPILE_TEST
++	select DRM_CLIENT_SELECTION
+ 	select DRM_KMS_HELPER
+ 	select DRM_DISPLAY_HELPER
+ 	select DRM_BRIDGE_CONNECTOR
+diff --git a/drivers/gpu/drm/tidss/Makefile b/drivers/gpu/drm/tidss/Makefile
+index 312645271..b6d6becf1 100644
+--- a/drivers/gpu/drm/tidss/Makefile
++++ b/drivers/gpu/drm/tidss/Makefile
+@@ -7,6 +7,7 @@ tidss-y := tidss_crtc.o \
+ 	tidss_irq.o \
+ 	tidss_plane.o \
+ 	tidss_scale_coefs.o \
+-	tidss_dispc.o
++	tidss_dispc.o \
++	tidss_oldi.o
+ 
+ obj-$(CONFIG_DRM_TIDSS) += tidss.o
+diff --git a/drivers/gpu/drm/tidss/tidss_crtc.c b/drivers/gpu/drm/tidss/tidss_crtc.c
+index 36c22d860..da89fd01c 100644
+--- a/drivers/gpu/drm/tidss/tidss_crtc.c
++++ b/drivers/gpu/drm/tidss/tidss_crtc.c
+@@ -133,7 +133,7 @@ static void tidss_crtc_position_planes(struct tidss_device *tidss,
+ 	    !to_tidss_crtc_state(cstate)->plane_pos_changed)
+ 		return;
+ 
+-	for (layer = 0; layer < tidss->feat->num_planes; layer++) {
++	for (layer = 0; layer < tidss->feat->num_vids ; layer++) {
+ 		struct drm_plane_state *pstate;
+ 		struct drm_plane *plane;
+ 		bool layer_active = false;
+@@ -274,7 +274,7 @@ static void tidss_crtc_atomic_disable(struct drm_crtc *crtc,
+ 	 * another videoport, the DSS will report sync lost issues. Disable all
+ 	 * the layers here as a work-around.
+ 	 */
+-	for (u32 layer = 0; layer < tidss->feat->num_planes; layer++)
++	for (u32 layer = 0; layer < tidss->feat->num_vids; layer++)
+ 		dispc_ovr_enable_layer(tidss->dispc, tcrtc->hw_videoport, layer,
+ 				       false);
+ 
+diff --git a/drivers/gpu/drm/tidss/tidss_dispc.c b/drivers/gpu/drm/tidss/tidss_dispc.c
+index 8ee6a6dc8..6bf1171d0 100644
+--- a/drivers/gpu/drm/tidss/tidss_dispc.c
++++ b/drivers/gpu/drm/tidss/tidss_dispc.c
+@@ -4,6 +4,7 @@
+  * Author: Jyri Sarha <jsarha@ti.com>
+  */
+ 
++#include <linux/bitfield.h>
+ #include <linux/clk.h>
+ #include <linux/delay.h>
+ #include <linux/dma-mapping.h>
+@@ -56,12 +57,6 @@ static const u16 tidss_k2g_common_regs[DISPC_COMMON_REG_TABLE_LEN] = {
+ };
+ 
+ const struct dispc_features dispc_k2g_feats = {
+-	.min_pclk_khz = 4375,
+-
+-	.max_pclk_khz = {
+-		[DISPC_VP_DPI] = 150000,
+-	},
+-
+ 	/*
+ 	 * XXX According TRM the RGB input buffer width up to 2560 should
+ 	 *     work on 3 taps, but in practice it only works up to 1280.
+@@ -103,9 +98,16 @@ const struct dispc_features dispc_k2g_feats = {
+ 		},
+ 	},
+ 
+-	.num_planes = 1,
+-	.vid_name = { "vid1" },
+-	.vid_lite = { false },
++	.num_vids = 1,
++
++	.vid_info = {
++		{
++			.name = "vid1",
++			.is_lite = false,
++			.hw_id = 0,
++		},
++	},
++
+ 	.vid_order = { 0 },
+ };
+ 
+@@ -137,11 +139,6 @@ static const u16 tidss_am65x_common_regs[DISPC_COMMON_REG_TABLE_LEN] = {
+ };
+ 
+ const struct dispc_features dispc_am65x_feats = {
+-	.max_pclk_khz = {
+-		[DISPC_VP_DPI] = 165000,
+-		[DISPC_VP_OLDI] = 165000,
+-	},
+-
+ 	.scaling = {
+ 		.in_width_max_5tap_rgb = 1280,
+ 		.in_width_max_3tap_rgb = 2560,
+@@ -169,7 +166,7 @@ const struct dispc_features dispc_am65x_feats = {
+ 	.vp_name = { "vp1", "vp2" },
+ 	.ovr_name = { "ovr1", "ovr2" },
+ 	.vpclk_name =  { "vp1", "vp2" },
+-	.vp_bus_type = { DISPC_VP_OLDI, DISPC_VP_DPI },
++	.vp_bus_type = { DISPC_VP_OLDI_AM65X, DISPC_VP_DPI },
+ 
+ 	.vp_feat = { .color = {
+ 			.has_ctm = true,
+@@ -178,11 +175,22 @@ const struct dispc_features dispc_am65x_feats = {
+ 		},
+ 	},
+ 
+-	.num_planes = 2,
++	.num_vids = 2,
+ 	/* note: vid is plane_id 0 and vidl1 is plane_id 1 */
+-	.vid_name = { "vid", "vidl1" },
+-	.vid_lite = { false, true, },
+-	.vid_order = { 1, 0 },
++	.vid_info = {
++		{
++			.name = "vid",
++			.is_lite = false,
++			.hw_id = 0,
++		},
++		{
++			.name = "vidl1",
++			.is_lite = true,
++			.hw_id = 1,
++		},
++	},
++
++	.vid_order = {1, 0},
+ };
+ 
+ static const u16 tidss_j721e_common_regs[DISPC_COMMON_REG_TABLE_LEN] = {
+@@ -226,11 +234,6 @@ static const u16 tidss_j721e_common_regs[DISPC_COMMON_REG_TABLE_LEN] = {
+ };
+ 
+ const struct dispc_features dispc_j721e_feats = {
+-	.max_pclk_khz = {
+-		[DISPC_VP_DPI] = 170000,
+-		[DISPC_VP_INTERNAL] = 600000,
+-	},
+-
+ 	.scaling = {
+ 		.in_width_max_5tap_rgb = 2048,
+ 		.in_width_max_3tap_rgb = 4096,
+@@ -267,18 +270,36 @@ const struct dispc_features dispc_j721e_feats = {
+ 			.gamma_type = TIDSS_GAMMA_10BIT,
+ 		},
+ 	},
+-	.num_planes = 4,
+-	.vid_name = { "vid1", "vidl1", "vid2", "vidl2" },
+-	.vid_lite = { 0, 1, 0, 1, },
++
++	.num_vids = 4,
++
++	.vid_info = {
++		{
++			.name = "vid1",
++			.is_lite = false,
++			.hw_id = 0,
++		},
++		{
++			.name = "vidl1",
++			.is_lite = true,
++			.hw_id = 1,
++		},
++		{
++			.name = "vid2",
++			.is_lite = false,
++			.hw_id = 2,
++		},
++		{
++			.name = "vidl2",
++			.is_lite = true,
++			.hw_id = 3,
++		},
++	},
++
+ 	.vid_order = { 1, 3, 0, 2 },
+ };
+ 
+ const struct dispc_features dispc_am625_feats = {
+-	.max_pclk_khz = {
+-		[DISPC_VP_DPI] = 165000,
+-		[DISPC_VP_INTERNAL] = 170000,
+-	},
+-
+ 	.scaling = {
+ 		.in_width_max_5tap_rgb = 1280,
+ 		.in_width_max_3tap_rgb = 2560,
+@@ -315,23 +336,26 @@ const struct dispc_features dispc_am625_feats = {
+ 		},
+ 	},
+ 
+-	.num_planes = 2,
++	.num_vids = 2,
++
+ 	/* note: vid is plane_id 0 and vidl1 is plane_id 1 */
+-	.vid_name = { "vid", "vidl1" },
+-	.vid_lite = { false, true, },
+-	.vid_order = { 1, 0 },
++	.vid_info = {
++		{
++			.name = "vid",
++			.is_lite = false,
++			.hw_id = 0,
++		},
++		{
++			.name = "vidl1",
++			.is_lite = true,
++			.hw_id = 1,
++		}
++	},
++
++	.vid_order = {1, 0},
+ };
+ 
+ const struct dispc_features dispc_am62a7_feats = {
+-	/*
+-	 * if the code reaches dispc_mode_valid with VP1,
+-	 * it should return MODE_BAD.
+-	 */
+-	.max_pclk_khz = {
+-		[DISPC_VP_TIED_OFF] = 0,
+-		[DISPC_VP_DPI] = 165000,
+-	},
+-
+ 	.scaling = {
+ 		.in_width_max_5tap_rgb = 1280,
+ 		.in_width_max_3tap_rgb = 2560,
+@@ -369,11 +393,54 @@ const struct dispc_features dispc_am62a7_feats = {
+ 		},
+ 	},
+ 
+-	.num_planes = 2,
+-	/* note: vid is plane_id 0 and vidl1 is plane_id 1 */
+-	.vid_name = { "vid", "vidl1" },
+-	.vid_lite = { false, true, },
+-	.vid_order = { 1, 0 },
++	.num_vids = 2,
++
++	.vid_info = {
++		{
++			.name = "vid",
++			.is_lite = false,
++			.hw_id = 0,
++		},
++		{
++			.name = "vidl1",
++			.is_lite = true,
++			.hw_id = 1,
++		}
++	},
++
++	.vid_order = {1, 0},
++};
++
++const struct dispc_features dispc_am62l_feats = {
++	.subrev = DISPC_AM62L,
++
++	.common = "common",
++	.common_regs = tidss_am65x_common_regs,
++
++	.num_vps = 1,
++	.vp_name = { "vp1" },
++	.ovr_name = { "ovr1" },
++	.vpclk_name =  { "vp1" },
++	.vp_bus_type = { DISPC_VP_DPI },
++
++	.vp_feat = { .color = {
++			.has_ctm = true,
++			.gamma_size = 256,
++			.gamma_type = TIDSS_GAMMA_8BIT,
++		},
++	},
++
++	.num_vids = 1,
++
++	.vid_info = {
++		{
++			.name = "vidl1",
++			.is_lite = true,
++			.hw_id = 1,
++		}
++	},
++
++	.vid_order = {0},
+ };
+ 
+ static const u16 *dispc_common_regmap;
+@@ -391,7 +458,7 @@ struct dispc_device {
+ 	void __iomem *base_ovr[TIDSS_MAX_PORTS];
+ 	void __iomem *base_vp[TIDSS_MAX_PORTS];
+ 
+-	struct regmap *oldi_io_ctrl;
++	struct regmap *am65x_oldi_io_ctrl;
+ 
+ 	struct clk *vp_clk[TIDSS_MAX_PORTS];
+ 
+@@ -466,84 +533,81 @@ static u32 dispc_vp_read(struct dispc_device *dispc, u32 hw_videoport, u16 reg)
+ 	return ioread32(base + reg);
+ }
+ 
+-/*
+- * TRM gives bitfields as start:end, where start is the higher bit
+- * number. For example 7:0
+- */
+-
+-static u32 FLD_MASK(u32 start, u32 end)
+-{
+-	return ((1 << (start - end + 1)) - 1) << end;
+-}
+-
+-static u32 FLD_VAL(u32 val, u32 start, u32 end)
+-{
+-	return (val << end) & FLD_MASK(start, end);
+-}
+-
+-static u32 FLD_GET(u32 val, u32 start, u32 end)
+-{
+-	return (val & FLD_MASK(start, end)) >> end;
+-}
+-
+-static u32 FLD_MOD(u32 orig, u32 val, u32 start, u32 end)
+-{
+-	return (orig & ~FLD_MASK(start, end)) | FLD_VAL(val, start, end);
+-}
+-
+-static u32 REG_GET(struct dispc_device *dispc, u32 idx, u32 start, u32 end)
++int tidss_configure_oldi(struct tidss_device *tidss, u32 hw_videoport,
++			 u32 oldi_cfg)
+ {
+-	return FLD_GET(dispc_read(dispc, idx), start, end);
+-}
++	u32 count = 0;
++	u32 oldi_reset_bit = BIT(5 + hw_videoport);
+ 
+-static void REG_FLD_MOD(struct dispc_device *dispc, u32 idx, u32 val,
+-			u32 start, u32 end)
+-{
+-	dispc_write(dispc, idx, FLD_MOD(dispc_read(dispc, idx), val,
+-					start, end));
+-}
++	dispc_vp_write(tidss->dispc, hw_videoport, DISPC_VP_DSS_OLDI_CFG, oldi_cfg);
+ 
+-static u32 VID_REG_GET(struct dispc_device *dispc, u32 hw_plane, u32 idx,
+-		       u32 start, u32 end)
+-{
+-	return FLD_GET(dispc_vid_read(dispc, hw_plane, idx), start, end);
+-}
++	while (!(oldi_reset_bit & dispc_read(tidss->dispc, DSS_SYSSTATUS)) &&
++	       count < 10000)
++		count++;
+ 
+-static void VID_REG_FLD_MOD(struct dispc_device *dispc, u32 hw_plane, u32 idx,
+-			    u32 val, u32 start, u32 end)
+-{
+-	dispc_vid_write(dispc, hw_plane, idx,
+-			FLD_MOD(dispc_vid_read(dispc, hw_plane, idx),
+-				val, start, end));
+-}
++	if (!(oldi_reset_bit & dispc_read(tidss->dispc, DSS_SYSSTATUS)))
++		return -ETIMEDOUT;
+ 
+-static u32 VP_REG_GET(struct dispc_device *dispc, u32 vp, u32 idx,
+-		      u32 start, u32 end)
+-{
+-	return FLD_GET(dispc_vp_read(dispc, vp, idx), start, end);
++	return 0;
+ }
+ 
+-static void VP_REG_FLD_MOD(struct dispc_device *dispc, u32 vp, u32 idx, u32 val,
+-			   u32 start, u32 end)
++void tidss_disable_oldi(struct tidss_device *tidss, u32 hw_videoport)
+ {
+-	dispc_vp_write(dispc, vp, idx, FLD_MOD(dispc_vp_read(dispc, vp, idx),
+-					       val, start, end));
++	dispc_vp_write(tidss->dispc, hw_videoport, DISPC_VP_DSS_OLDI_CFG, 0);
+ }
+ 
+-__maybe_unused
+-static u32 OVR_REG_GET(struct dispc_device *dispc, u32 ovr, u32 idx,
+-		       u32 start, u32 end)
+-{
+-	return FLD_GET(dispc_ovr_read(dispc, ovr, idx), start, end);
+-}
++/*
++ * TRM gives bitfields as start:end, where start is the higher bit
++ * number. For example 7:0
++ */
+ 
+-static void OVR_REG_FLD_MOD(struct dispc_device *dispc, u32 ovr, u32 idx,
+-			    u32 val, u32 start, u32 end)
+-{
+-	dispc_ovr_write(dispc, ovr, idx,
+-			FLD_MOD(dispc_ovr_read(dispc, ovr, idx),
+-				val, start, end));
+-}
++#define REG_GET(dispc, idx, mask)					\
++	((u32)FIELD_GET((mask), dispc_read((dispc), (idx))))
++
++#define REG_FLD_MOD(dispc, idx, val, mask)				\
++	({								\
++		struct dispc_device *_dispc = (dispc);			\
++		u32 _idx = (idx);					\
++		u32 _reg = dispc_read(_dispc, _idx);			\
++		FIELD_MODIFY((mask), &_reg, (val));			\
++		dispc_write(_dispc, _idx, _reg);			\
++	})
++
++#define VID_REG_GET(dispc, hw_plane, idx, mask)				\
++	((u32)FIELD_GET((mask), dispc_vid_read((dispc), (hw_plane), (idx))))
++
++#define VID_REG_FLD_MOD(dispc, hw_plane, idx, val, mask)		\
++	({								\
++		struct dispc_device *_dispc = (dispc);			\
++		u32 _hw_plane = (hw_plane);				\
++		u32 _idx = (idx);					\
++		u32 _reg = dispc_vid_read(_dispc, _hw_plane, _idx);	\
++		FIELD_MODIFY((mask), &_reg, (val));			\
++		dispc_vid_write(_dispc, _hw_plane, _idx, _reg);		\
++	})
++
++#define VP_REG_GET(dispc, vp, idx, mask)				\
++	((u32)FIELD_GET((mask), dispc_vp_read((dispc), (vp), (idx))))
++
++#define VP_REG_FLD_MOD(dispc, vp, idx, val, mask)			\
++	({								\
++		struct dispc_device *_dispc = (dispc);			\
++		u32 _vp = (vp);						\
++		u32 _idx = (idx);					\
++		u32 _reg = dispc_vp_read(_dispc, _vp, _idx);		\
++		FIELD_MODIFY((mask), &_reg, (val));			\
++		dispc_vp_write(_dispc, _vp, _idx, _reg);		\
++	})
++
++#define OVR_REG_FLD_MOD(dispc, ovr, idx, val, mask)			\
++	({								\
++		struct dispc_device *_dispc = (dispc);			\
++		u32 _ovr = (ovr);					\
++		u32 _idx = (idx);					\
++		u32 _reg = dispc_ovr_read(_dispc, _ovr, _idx);		\
++		FIELD_MODIFY((mask), &_reg, (val));			\
++		dispc_ovr_write(_dispc, _ovr, _idx, _reg);		\
++	})
+ 
+ static dispc_irq_t dispc_vp_irq_from_raw(u32 stat, u32 hw_videoport)
+ {
+@@ -734,7 +798,8 @@ static void dispc_k3_vp_write_irqstatus(struct dispc_device *dispc,
+ static dispc_irq_t dispc_k3_vid_read_irqstatus(struct dispc_device *dispc,
+ 					       u32 hw_plane)
+ {
+-	u32 stat = dispc_read(dispc, DISPC_VID_IRQSTATUS(hw_plane));
++	u32 hw_id = dispc->feat->vid_info[hw_plane].hw_id;
++	u32 stat = dispc_read(dispc, DISPC_VID_IRQSTATUS(hw_id));
+ 
+ 	return dispc_vid_irq_from_raw(stat, hw_plane);
+ }
+@@ -742,9 +807,10 @@ static dispc_irq_t dispc_k3_vid_read_irqstatus(struct dispc_device *dispc,
+ static void dispc_k3_vid_write_irqstatus(struct dispc_device *dispc,
+ 					 u32 hw_plane, dispc_irq_t vidstat)
+ {
++	u32 hw_id = dispc->feat->vid_info[hw_plane].hw_id;
+ 	u32 stat = dispc_vid_irq_to_raw(vidstat, hw_plane);
+ 
+-	dispc_write(dispc, DISPC_VID_IRQSTATUS(hw_plane), stat);
++	dispc_write(dispc, DISPC_VID_IRQSTATUS(hw_id), stat);
+ }
+ 
+ static dispc_irq_t dispc_k3_vp_read_irqenable(struct dispc_device *dispc,
+@@ -766,7 +832,8 @@ static void dispc_k3_vp_set_irqenable(struct dispc_device *dispc,
+ static dispc_irq_t dispc_k3_vid_read_irqenable(struct dispc_device *dispc,
+ 					       u32 hw_plane)
+ {
+-	u32 stat = dispc_read(dispc, DISPC_VID_IRQENABLE(hw_plane));
++	u32 hw_id = dispc->feat->vid_info[hw_plane].hw_id;
++	u32 stat = dispc_read(dispc, DISPC_VID_IRQENABLE(hw_id));
+ 
+ 	return dispc_vid_irq_from_raw(stat, hw_plane);
+ }
+@@ -774,9 +841,10 @@ static dispc_irq_t dispc_k3_vid_read_irqenable(struct dispc_device *dispc,
+ static void dispc_k3_vid_set_irqenable(struct dispc_device *dispc,
+ 				       u32 hw_plane, dispc_irq_t vidstat)
+ {
++	u32 hw_id = dispc->feat->vid_info[hw_plane].hw_id;
+ 	u32 stat = dispc_vid_irq_to_raw(vidstat, hw_plane);
+ 
+-	dispc_write(dispc, DISPC_VID_IRQENABLE(hw_plane), stat);
++	dispc_write(dispc, DISPC_VID_IRQENABLE(hw_id), stat);
+ }
+ 
+ static
+@@ -788,12 +856,11 @@ void dispc_k3_clear_irqstatus(struct dispc_device *dispc, dispc_irq_t clearmask)
+ 		if (clearmask & DSS_IRQ_VP_MASK(i))
+ 			dispc_k3_vp_write_irqstatus(dispc, i, clearmask);
+ 	}
+-	for (i = 0; i < dispc->feat->num_planes; ++i) {
++
++	for (i = 0; i < dispc->feat->num_vids; ++i) {
+ 		if (clearmask & DSS_IRQ_PLANE_MASK(i))
+ 			dispc_k3_vid_write_irqstatus(dispc, i, clearmask);
+ 	}
+-	if (dispc->feat->subrev == DISPC_K2G)
+-		return;
+ 
+ 	/* always clear the top level irqstatus */
+ 	dispc_write(dispc, DISPC_IRQSTATUS, dispc_read(dispc, DISPC_IRQSTATUS));
+@@ -811,7 +878,7 @@ dispc_irq_t dispc_k3_read_and_clear_irqstatus(struct dispc_device *dispc)
+ 	for (i = 0; i < dispc->feat->num_vps; ++i)
+ 		status |= dispc_k3_vp_read_irqstatus(dispc, i);
+ 
+-	for (i = 0; i < dispc->feat->num_planes; ++i)
++	for (i = 0; i < dispc->feat->num_vids; ++i)
+ 		status |= dispc_k3_vid_read_irqstatus(dispc, i);
+ 
+ 	dispc_k3_clear_irqstatus(dispc, status);
+@@ -827,7 +894,7 @@ static dispc_irq_t dispc_k3_read_irqenable(struct dispc_device *dispc)
+ 	for (i = 0; i < dispc->feat->num_vps; ++i)
+ 		enable |= dispc_k3_vp_read_irqenable(dispc, i);
+ 
+-	for (i = 0; i < dispc->feat->num_planes; ++i)
++	for (i = 0; i < dispc->feat->num_vids; ++i)
+ 		enable |= dispc_k3_vid_read_irqenable(dispc, i);
+ 
+ 	return enable;
+@@ -853,12 +920,15 @@ static void dispc_k3_set_irqenable(struct dispc_device *dispc,
+ 			main_disable |= BIT(i);		/* VP IRQ */
+ 	}
+ 
+-	for (i = 0; i < dispc->feat->num_planes; ++i) {
++	for (i = 0; i < dispc->feat->num_vids; ++i) {
++		u32 hw_id = dispc->feat->vid_info[i].hw_id;
++
+ 		dispc_k3_vid_set_irqenable(dispc, i, mask);
++
+ 		if (mask & DSS_IRQ_PLANE_MASK(i))
+-			main_enable |= BIT(i + 4);	/* VID IRQ */
++			main_enable |= BIT(hw_id + 4);	/* VID IRQ */
+ 		else
+-			main_disable |= BIT(i + 4);	/* VID IRQ */
++			main_disable |= BIT(hw_id + 4);	/* VID IRQ */
+ 	}
+ 
+ 	if (main_enable)
+@@ -881,6 +951,7 @@ dispc_irq_t dispc_read_and_clear_irqstatus(struct dispc_device *dispc)
+ 		return dispc_k2g_read_and_clear_irqstatus(dispc);
+ 	case DISPC_AM625:
+ 	case DISPC_AM62A7:
++	case DISPC_AM62L:
+ 	case DISPC_AM65X:
+ 	case DISPC_J721E:
+ 		return dispc_k3_read_and_clear_irqstatus(dispc);
+@@ -898,6 +969,7 @@ void dispc_set_irqenable(struct dispc_device *dispc, dispc_irq_t mask)
+ 		break;
+ 	case DISPC_AM625:
+ 	case DISPC_AM62A7:
++	case DISPC_AM62L:
+ 	case DISPC_AM65X:
+ 	case DISPC_J721E:
+ 		dispc_k3_set_irqenable(dispc, mask);
+@@ -908,13 +980,11 @@ void dispc_set_irqenable(struct dispc_device *dispc, dispc_irq_t mask)
+ 	}
+ }
+ 
+-enum dispc_oldi_mode_reg_val { SPWG_18 = 0, JEIDA_24 = 1, SPWG_24 = 2 };
+-
+ struct dispc_bus_format {
+ 	u32 bus_fmt;
+ 	u32 data_width;
+ 	bool is_oldi_fmt;
+-	enum dispc_oldi_mode_reg_val oldi_mode_reg_val;
++	enum oldi_mode_reg_val am65x_oldi_mode_reg_val;
+ };
+ 
+ static const struct dispc_bus_format dispc_bus_formats[] = {
+@@ -958,7 +1028,7 @@ int dispc_vp_bus_check(struct dispc_device *dispc, u32 hw_videoport,
+ 		return -EINVAL;
+ 	}
+ 
+-	if (dispc->feat->vp_bus_type[hw_videoport] != DISPC_VP_OLDI &&
++	if (dispc->feat->vp_bus_type[hw_videoport] != DISPC_VP_OLDI_AM65X &&
+ 	    fmt->is_oldi_fmt) {
+ 		dev_dbg(dispc->dev, "%s: %s is not OLDI-port\n",
+ 			__func__, dispc->feat->vp_name[hw_videoport]);
+@@ -968,23 +1038,23 @@ int dispc_vp_bus_check(struct dispc_device *dispc, u32 hw_videoport,
+ 	return 0;
+ }
+ 
+-static void dispc_oldi_tx_power(struct dispc_device *dispc, bool power)
++static void dispc_am65x_oldi_tx_power(struct dispc_device *dispc, bool power)
+ {
+-	u32 val = power ? 0 : OLDI_PWRDN_TX;
++	u32 val = power ? 0 : AM65X_OLDI_PWRDN_TX;
+ 
+-	if (WARN_ON(!dispc->oldi_io_ctrl))
++	if (WARN_ON(!dispc->am65x_oldi_io_ctrl))
+ 		return;
+ 
+-	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT0_IO_CTRL,
+-			   OLDI_PWRDN_TX, val);
+-	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT1_IO_CTRL,
+-			   OLDI_PWRDN_TX, val);
+-	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT2_IO_CTRL,
+-			   OLDI_PWRDN_TX, val);
+-	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_DAT3_IO_CTRL,
+-			   OLDI_PWRDN_TX, val);
+-	regmap_update_bits(dispc->oldi_io_ctrl, OLDI_CLK_IO_CTRL,
+-			   OLDI_PWRDN_TX, val);
++	regmap_update_bits(dispc->am65x_oldi_io_ctrl, AM65X_OLDI_DAT0_IO_CTRL,
++			   AM65X_OLDI_PWRDN_TX, val);
++	regmap_update_bits(dispc->am65x_oldi_io_ctrl, AM65X_OLDI_DAT1_IO_CTRL,
++			   AM65X_OLDI_PWRDN_TX, val);
++	regmap_update_bits(dispc->am65x_oldi_io_ctrl, AM65X_OLDI_DAT2_IO_CTRL,
++			   AM65X_OLDI_PWRDN_TX, val);
++	regmap_update_bits(dispc->am65x_oldi_io_ctrl, AM65X_OLDI_DAT3_IO_CTRL,
++			   AM65X_OLDI_PWRDN_TX, val);
++	regmap_update_bits(dispc->am65x_oldi_io_ctrl, AM65X_OLDI_CLK_IO_CTRL,
++			   AM65X_OLDI_PWRDN_TX, val);
+ }
+ 
+ static void dispc_set_num_datalines(struct dispc_device *dispc,
+@@ -1010,11 +1080,12 @@ static void dispc_set_num_datalines(struct dispc_device *dispc,
+ 		v = 3;
+ 	}
+ 
+-	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, v, 10, 8);
++	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, v,
++		       DISPC_VP_CONTROL_DATALINES_MASK);
+ }
+ 
+-static void dispc_enable_oldi(struct dispc_device *dispc, u32 hw_videoport,
+-			      const struct dispc_bus_format *fmt)
++static void dispc_enable_am65x_oldi(struct dispc_device *dispc, u32 hw_videoport,
++				    const struct dispc_bus_format *fmt)
+ {
+ 	u32 oldi_cfg = 0;
+ 	u32 oldi_reset_bit = BIT(5 + hw_videoport);
+@@ -1033,7 +1104,8 @@ static void dispc_enable_oldi(struct dispc_device *dispc, u32 hw_videoport,
+ 
+ 	oldi_cfg |= BIT(7); /* DEPOL */
+ 
+-	oldi_cfg = FLD_MOD(oldi_cfg, fmt->oldi_mode_reg_val, 3, 1);
++	FIELD_MODIFY(DISPC_VP_DSS_OLDI_CFG_MAP_MASK, &oldi_cfg,
++		     fmt->am65x_oldi_mode_reg_val);
+ 
+ 	oldi_cfg |= BIT(12); /* SOFTRST */
+ 
+@@ -1062,10 +1134,10 @@ void dispc_vp_prepare(struct dispc_device *dispc, u32 hw_videoport,
+ 	if (WARN_ON(!fmt))
+ 		return;
+ 
+-	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI) {
+-		dispc_oldi_tx_power(dispc, true);
++	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI_AM65X) {
++		dispc_am65x_oldi_tx_power(dispc, true);
+ 
+-		dispc_enable_oldi(dispc, hw_videoport, fmt);
++		dispc_enable_am65x_oldi(dispc, hw_videoport, fmt);
+ 	}
+ }
+ 
+@@ -1095,14 +1167,14 @@ void dispc_vp_enable(struct dispc_device *dispc, u32 hw_videoport,
+ 	vbp = mode->crtc_vtotal - mode->crtc_vsync_end;
+ 
+ 	dispc_vp_write(dispc, hw_videoport, DISPC_VP_TIMING_H,
+-		       FLD_VAL(hsw - 1, 7, 0) |
+-		       FLD_VAL(hfp - 1, 19, 8) |
+-		       FLD_VAL(hbp - 1, 31, 20));
++		       FIELD_PREP(DISPC_VP_TIMING_H_SYNC_PULSE_MASK, hsw - 1) |
++		       FIELD_PREP(DISPC_VP_TIMING_H_FRONT_PORCH_MASK, hfp - 1) |
++		       FIELD_PREP(DISPC_VP_TIMING_H_BACK_PORCH_MASK, hbp - 1));
+ 
+ 	dispc_vp_write(dispc, hw_videoport, DISPC_VP_TIMING_V,
+-		       FLD_VAL(vsw - 1, 7, 0) |
+-		       FLD_VAL(vfp, 19, 8) |
+-		       FLD_VAL(vbp, 31, 20));
++		       FIELD_PREP(DISPC_VP_TIMING_V_SYNC_PULSE_MASK, vsw - 1) |
++		       FIELD_PREP(DISPC_VP_TIMING_V_FRONT_PORCH_MASK, vfp) |
++		       FIELD_PREP(DISPC_VP_TIMING_V_BACK_PORCH_MASK, vbp));
+ 
+ 	ivs = !!(mode->flags & DRM_MODE_FLAG_NVSYNC);
+ 
+@@ -1121,48 +1193,55 @@ void dispc_vp_enable(struct dispc_device *dispc, u32 hw_videoport,
+ 	align = true;
+ 
+ 	/* always use DE_HIGH for OLDI */
+-	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI)
++	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI_AM65X)
+ 		ieo = false;
+ 
+ 	dispc_vp_write(dispc, hw_videoport, DISPC_VP_POL_FREQ,
+-		       FLD_VAL(align, 18, 18) |
+-		       FLD_VAL(onoff, 17, 17) |
+-		       FLD_VAL(rf, 16, 16) |
+-		       FLD_VAL(ieo, 15, 15) |
+-		       FLD_VAL(ipc, 14, 14) |
+-		       FLD_VAL(ihs, 13, 13) |
+-		       FLD_VAL(ivs, 12, 12));
++		       FIELD_PREP(DISPC_VP_POL_FREQ_ALIGN_MASK, align) |
++		       FIELD_PREP(DISPC_VP_POL_FREQ_ONOFF_MASK, onoff) |
++		       FIELD_PREP(DISPC_VP_POL_FREQ_RF_MASK, rf) |
++		       FIELD_PREP(DISPC_VP_POL_FREQ_IEO_MASK, ieo) |
++		       FIELD_PREP(DISPC_VP_POL_FREQ_IPC_MASK, ipc) |
++		       FIELD_PREP(DISPC_VP_POL_FREQ_IHS_MASK, ihs) |
++		       FIELD_PREP(DISPC_VP_POL_FREQ_IVS_MASK, ivs));
+ 
+ 	dispc_vp_write(dispc, hw_videoport, DISPC_VP_SIZE_SCREEN,
+-		       FLD_VAL(mode->crtc_hdisplay - 1, 11, 0) |
+-		       FLD_VAL(mode->crtc_vdisplay - 1, 27, 16));
++		       FIELD_PREP(DISPC_VP_SIZE_SCREEN_HDISPLAY_MASK,
++				  mode->crtc_hdisplay - 1) |
++		       FIELD_PREP(DISPC_VP_SIZE_SCREEN_VDISPLAY_MASK,
++				  mode->crtc_vdisplay - 1));
+ 
+-	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, 1, 0, 0);
++	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, 1,
++		       DISPC_VP_CONTROL_ENABLE_MASK);
+ }
+ 
+ void dispc_vp_disable(struct dispc_device *dispc, u32 hw_videoport)
+ {
+-	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, 0, 0, 0);
++	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, 0,
++		       DISPC_VP_CONTROL_ENABLE_MASK);
+ }
+ 
+ void dispc_vp_unprepare(struct dispc_device *dispc, u32 hw_videoport)
+ {
+-	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI) {
++	if (dispc->feat->vp_bus_type[hw_videoport] == DISPC_VP_OLDI_AM65X) {
+ 		dispc_vp_write(dispc, hw_videoport, DISPC_VP_DSS_OLDI_CFG, 0);
+ 
+-		dispc_oldi_tx_power(dispc, false);
++		dispc_am65x_oldi_tx_power(dispc, false);
+ 	}
+ }
+ 
+ bool dispc_vp_go_busy(struct dispc_device *dispc, u32 hw_videoport)
+ {
+-	return VP_REG_GET(dispc, hw_videoport, DISPC_VP_CONTROL, 5, 5);
++	return VP_REG_GET(dispc, hw_videoport, DISPC_VP_CONTROL,
++			  DISPC_VP_CONTROL_GOBIT_MASK);
+ }
+ 
+ void dispc_vp_go(struct dispc_device *dispc, u32 hw_videoport)
+ {
+-	WARN_ON(VP_REG_GET(dispc, hw_videoport, DISPC_VP_CONTROL, 5, 5));
+-	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, 1, 5, 5);
++	WARN_ON(VP_REG_GET(dispc, hw_videoport, DISPC_VP_CONTROL,
++			   DISPC_VP_CONTROL_GOBIT_MASK));
++	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONTROL, 1,
++		       DISPC_VP_CONTROL_GOBIT_MASK);
+ }
+ 
+ enum c8_to_c12_mode { C8_TO_C12_REPLICATE, C8_TO_C12_MAX, C8_TO_C12_MIN };
+@@ -1218,33 +1297,61 @@ static void dispc_vp_set_default_color(struct dispc_device *dispc,
+ 			DISPC_OVR_DEFAULT_COLOR2, (v >> 32) & 0xffff);
+ }
+ 
++/*
++ * Calculate the percentage difference between the requested pixel clock rate
++ * and the effective rate resulting from calculating the clock divider value.
++ */
++unsigned int dispc_pclk_diff(unsigned long rate, unsigned long real_rate)
++{
++	int r = rate / 100, rr = real_rate / 100;
++
++	return (unsigned int)(abs(((rr - r) * 100) / r));
++}
++
++static int check_pixel_clock(struct dispc_device *dispc, u32 hw_videoport,
++			     unsigned long clock)
++{
++	unsigned long round_clock;
++
++	/*
++	 * For VP's with external clocking, clock operations must be
++	 * delegated to respective driver, so we skip the check here.
++	 */
++	if (dispc->tidss->is_ext_vp_clk[hw_videoport])
++		return 0;
++
++	round_clock = clk_round_rate(dispc->vp_clk[hw_videoport], clock);
++	/*
++	 * To keep the check consistent with dispc_vp_set_clk_rate(), we
++	 * use the same 5% check here.
++	 */
++	if (dispc_pclk_diff(clock, round_clock) > 5)
++		return -EINVAL;
++
++	return 0;
++}
++
+ enum drm_mode_status dispc_vp_mode_valid(struct dispc_device *dispc,
+ 					 u32 hw_videoport,
+ 					 const struct drm_display_mode *mode)
+ {
+ 	u32 hsw, hfp, hbp, vsw, vfp, vbp;
+ 	enum dispc_vp_bus_type bus_type;
+-	int max_pclk;
+ 
+ 	bus_type = dispc->feat->vp_bus_type[hw_videoport];
+ 
+-	max_pclk = dispc->feat->max_pclk_khz[bus_type];
+-
+-	if (WARN_ON(max_pclk == 0))
++	if (WARN_ON(bus_type == DISPC_VP_TIED_OFF))
+ 		return MODE_BAD;
+ 
+-	if (mode->clock < dispc->feat->min_pclk_khz)
+-		return MODE_CLOCK_LOW;
+-
+-	if (mode->clock > max_pclk)
+-		return MODE_CLOCK_HIGH;
+-
+ 	if (mode->hdisplay > 4096)
+ 		return MODE_BAD;
+ 
+ 	if (mode->vdisplay > 4096)
+ 		return MODE_BAD;
+ 
++	if (check_pixel_clock(dispc, hw_videoport, mode->clock * 1000))
++		return MODE_CLOCK_RANGE;
++
+ 	/* TODO: add interlace support */
+ 	if (mode->flags & DRM_MODE_FLAG_INTERLACE)
+ 		return MODE_NO_INTERLACE;
+@@ -1308,18 +1415,6 @@ void dispc_vp_disable_clk(struct dispc_device *dispc, u32 hw_videoport)
+ 	clk_disable_unprepare(dispc->vp_clk[hw_videoport]);
+ }
+ 
+-/*
+- * Calculate the percentage difference between the requested pixel clock rate
+- * and the effective rate resulting from calculating the clock divider value.
+- */
+-static
+-unsigned int dispc_pclk_diff(unsigned long rate, unsigned long real_rate)
+-{
+-	int r = rate / 100, rr = real_rate / 100;
+-
+-	return (unsigned int)(abs(((rr - r) * 100) / r));
+-}
+-
+ int dispc_vp_set_clk_rate(struct dispc_device *dispc, u32 hw_videoport,
+ 			  unsigned long rate)
+ {
+@@ -1360,24 +1455,28 @@ static void dispc_am65x_ovr_set_plane(struct dispc_device *dispc,
+ 				      u32 hw_plane, u32 hw_videoport,
+ 				      u32 x, u32 y, u32 layer)
+ {
++	u32 hw_id = dispc->feat->vid_info[hw_plane].hw_id;
++
+ 	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES(layer),
+-			hw_plane, 4, 1);
+-	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES(layer),
+-			x, 17, 6);
+-	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES(layer),
+-			y, 30, 19);
++			hw_id, DISPC_OVR_ATTRIBUTES_CHANNELIN_MASK);
++	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES(layer), x,
++			DISPC_OVR_ATTRIBUTES_POSX_MASK);
++	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES(layer), y,
++			DISPC_OVR_ATTRIBUTES_POSY_MASK);
+ }
+ 
+ static void dispc_j721e_ovr_set_plane(struct dispc_device *dispc,
+ 				      u32 hw_plane, u32 hw_videoport,
+ 				      u32 x, u32 y, u32 layer)
+ {
++	u32 hw_id = dispc->feat->vid_info[hw_plane].hw_id;
++
+ 	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES(layer),
+-			hw_plane, 4, 1);
+-	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES2(layer),
+-			x, 13, 0);
+-	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES2(layer),
+-			y, 29, 16);
++			hw_id, DISPC_OVR_ATTRIBUTES_CHANNELIN_MASK);
++	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES2(layer), x,
++			DISPC_OVR_ATTRIBUTES2_POSX_MASK);
++	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES2(layer), y,
++			DISPC_OVR_ATTRIBUTES2_POSY_MASK);
+ }
+ 
+ void dispc_ovr_set_plane(struct dispc_device *dispc, u32 hw_plane,
+@@ -1390,6 +1489,7 @@ void dispc_ovr_set_plane(struct dispc_device *dispc, u32 hw_plane,
+ 		break;
+ 	case DISPC_AM625:
+ 	case DISPC_AM62A7:
++	case DISPC_AM62L:
+ 	case DISPC_AM65X:
+ 		dispc_am65x_ovr_set_plane(dispc, hw_plane, hw_videoport,
+ 					  x, y, layer);
+@@ -1411,7 +1511,7 @@ void dispc_ovr_enable_layer(struct dispc_device *dispc,
+ 		return;
+ 
+ 	OVR_REG_FLD_MOD(dispc, hw_videoport, DISPC_OVR_ATTRIBUTES(layer),
+-			!!enable, 0, 0);
++			!!enable, DISPC_OVR_ATTRIBUTES_ENABLE_MASK);
+ }
+ 
+ /* CSC */
+@@ -1447,14 +1547,14 @@ struct dispc_csc_coef {
+ static
+ void dispc_csc_offset_regval(const struct dispc_csc_coef *csc, u32 *regval)
+ {
+-#define OVAL(x, y) (FLD_VAL(x, 15, 3) | FLD_VAL(y, 31, 19))
++#define OVAL(x, y) (FIELD_PREP(GENMASK(15, 3), x) | FIELD_PREP(GENMASK(31, 19), y))
+ 	regval[5] = OVAL(csc->preoffset[0], csc->preoffset[1]);
+ 	regval[6] = OVAL(csc->preoffset[2], csc->postoffset[0]);
+ 	regval[7] = OVAL(csc->postoffset[1], csc->postoffset[2]);
+ #undef OVAL
+ }
+ 
+-#define CVAL(x, y) (FLD_VAL(x, 10, 0) | FLD_VAL(y, 26, 16))
++#define CVAL(x, y) (FIELD_PREP(GENMASK(10, 0), x) | FIELD_PREP(GENMASK(26, 16), y))
+ static
+ void dispc_csc_yuv2rgb_regval(const struct dispc_csc_coef *csc, u32 *regval)
+ {
+@@ -1634,7 +1734,8 @@ static void dispc_vid_csc_setup(struct dispc_device *dispc, u32 hw_plane,
+ static void dispc_vid_csc_enable(struct dispc_device *dispc, u32 hw_plane,
+ 				 bool enable)
+ {
+-	VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, !!enable, 9, 9);
++	VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, !!enable,
++			DISPC_VID_ATTRIBUTES_COLORCONVENABLE_MASK);
+ }
+ 
+ /* SCALER */
+@@ -1693,7 +1794,8 @@ static void dispc_vid_write_fir_coefs(struct dispc_device *dispc,
+ 
+ 		c1 = coefs->c1[phase];
+ 		c2 = coefs->c2[phase];
+-		c12 = FLD_VAL(c1, 19, 10) | FLD_VAL(c2, 29, 20);
++		c12 = FIELD_PREP(GENMASK(19, 10), c1) | FIELD_PREP(GENMASK(29, 20),
++								   c2);
+ 
+ 		dispc_vid_write(dispc, hw_plane, reg, c12);
+ 	}
+@@ -1890,20 +1992,20 @@ static void dispc_vid_set_scaling(struct dispc_device *dispc,
+ 				  u32 fourcc)
+ {
+ 	/* HORIZONTAL RESIZE ENABLE */
+-	VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES,
+-			sp->scale_x, 7, 7);
++	VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, sp->scale_x,
++			DISPC_VID_ATTRIBUTES_HRESIZEENABLE_MASK);
+ 
+ 	/* VERTICAL RESIZE ENABLE */
+-	VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES,
+-			sp->scale_y, 8, 8);
++	VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, sp->scale_y,
++			DISPC_VID_ATTRIBUTES_VRESIZEENABLE_MASK);
+ 
+ 	/* Skip the rest if no scaling is used */
+ 	if (!sp->scale_x && !sp->scale_y)
+ 		return;
+ 
+ 	/* VERTICAL 5-TAPS  */
+-	VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES,
+-			sp->five_taps, 21, 21);
++	VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, sp->five_taps,
++			DISPC_VID_ATTRIBUTES_VERTICALTAPS_MASK);
+ 
+ 	if (dispc_fourcc_is_yuv(fourcc)) {
+ 		if (sp->scale_x) {
+@@ -1993,7 +2095,7 @@ static void dispc_plane_set_pixel_format(struct dispc_device *dispc,
+ 		if (dispc_color_formats[i].fourcc == fourcc) {
+ 			VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES,
+ 					dispc_color_formats[i].dss_code,
+-					6, 1);
++					DISPC_VID_ATTRIBUTES_FORMAT_MASK);
+ 			return;
+ 		}
+ 	}
+@@ -2027,7 +2129,7 @@ int dispc_plane_check(struct dispc_device *dispc, u32 hw_plane,
+ 		      const struct drm_plane_state *state,
+ 		      u32 hw_videoport)
+ {
+-	bool lite = dispc->feat->vid_lite[hw_plane];
++	bool lite = dispc->feat->vid_info[hw_plane].is_lite;
+ 	u32 fourcc = state->fb->format->format;
+ 	bool need_scaling = state->src_w >> 16 != state->crtc_w ||
+ 		state->src_h >> 16 != state->crtc_h;
+@@ -2098,7 +2200,7 @@ void dispc_plane_setup(struct dispc_device *dispc, u32 hw_plane,
+ 		       const struct drm_plane_state *state,
+ 		       u32 hw_videoport)
+ {
+-	bool lite = dispc->feat->vid_lite[hw_plane];
++	bool lite = dispc->feat->vid_info[hw_plane].is_lite;
+ 	u32 fourcc = state->fb->format->format;
+ 	u16 cpp = state->fb->format->cpp[0];
+ 	u32 fb_width = state->fb->pitches[0] / cpp;
+@@ -2115,7 +2217,8 @@ void dispc_plane_setup(struct dispc_device *dispc, u32 hw_plane,
+ 	dispc_vid_write(dispc, hw_plane, DISPC_VID_BA_EXT_1, (u64)dma_addr >> 32);
+ 
+ 	dispc_vid_write(dispc, hw_plane, DISPC_VID_PICTURE_SIZE,
+-			(scale.in_w - 1) | ((scale.in_h - 1) << 16));
++			FIELD_PREP(DISPC_VID_PICTURE_SIZE_MEMSIZEY_MASK, scale.in_h - 1) |
++			FIELD_PREP(DISPC_VID_PICTURE_SIZE_MEMSIZEX_MASK, scale.in_w - 1));
+ 
+ 	/* For YUV422 format we use the macropixel size for pixel inc */
+ 	if (fourcc == DRM_FORMAT_YUYV || fourcc == DRM_FORMAT_UYVY)
+@@ -2152,8 +2255,10 @@ void dispc_plane_setup(struct dispc_device *dispc, u32 hw_plane,
+ 
+ 	if (!lite) {
+ 		dispc_vid_write(dispc, hw_plane, DISPC_VID_SIZE,
+-				(state->crtc_w - 1) |
+-				((state->crtc_h - 1) << 16));
++				FIELD_PREP(DISPC_VID_SIZE_SIZEY_MASK,
++					   state->crtc_h - 1) |
++				FIELD_PREP(DISPC_VID_SIZE_SIZEX_MASK,
++					   state->crtc_w - 1));
+ 
+ 		dispc_vid_set_scaling(dispc, hw_plane, &scale, fourcc);
+ 	}
+@@ -2167,38 +2272,45 @@ void dispc_plane_setup(struct dispc_device *dispc, u32 hw_plane,
+ 	}
+ 
+ 	dispc_vid_write(dispc, hw_plane, DISPC_VID_GLOBAL_ALPHA,
+-			0xFF & (state->alpha >> 8));
++			FIELD_PREP(DISPC_VID_GLOBAL_ALPHA_GLOBALALPHA_MASK,
++				   state->alpha >> 8));
+ 
+ 	if (state->pixel_blend_mode == DRM_MODE_BLEND_PREMULTI)
+ 		VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, 1,
+-				28, 28);
++				DISPC_VID_ATTRIBUTES_PREMULTIPLYALPHA_MASK);
+ 	else
+ 		VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, 0,
+-				28, 28);
++				DISPC_VID_ATTRIBUTES_PREMULTIPLYALPHA_MASK);
+ }
+ 
+ void dispc_plane_enable(struct dispc_device *dispc, u32 hw_plane, bool enable)
+ {
+-	VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, !!enable, 0, 0);
++	VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, !!enable,
++			DISPC_VID_ATTRIBUTES_ENABLE_MASK);
+ }
+ 
+ static u32 dispc_vid_get_fifo_size(struct dispc_device *dispc, u32 hw_plane)
+ {
+-	return VID_REG_GET(dispc, hw_plane, DISPC_VID_BUF_SIZE_STATUS, 15, 0);
++	return VID_REG_GET(dispc, hw_plane, DISPC_VID_BUF_SIZE_STATUS,
++			   DISPC_VID_BUF_SIZE_STATUS_BUFSIZE_MASK);
+ }
+ 
+ static void dispc_vid_set_mflag_threshold(struct dispc_device *dispc,
+ 					  u32 hw_plane, u32 low, u32 high)
+ {
+ 	dispc_vid_write(dispc, hw_plane, DISPC_VID_MFLAG_THRESHOLD,
+-			FLD_VAL(high, 31, 16) | FLD_VAL(low, 15, 0));
++			FIELD_PREP(DISPC_VID_MFLAG_THRESHOLD_HT_MFLAG_MASK, high) |
++			FIELD_PREP(DISPC_VID_MFLAG_THRESHOLD_LT_MFLAG_MASK, low));
+ }
+ 
+ static void dispc_vid_set_buf_threshold(struct dispc_device *dispc,
+ 					u32 hw_plane, u32 low, u32 high)
+ {
+ 	dispc_vid_write(dispc, hw_plane, DISPC_VID_BUF_THRESHOLD,
+-			FLD_VAL(high, 31, 16) | FLD_VAL(low, 15, 0));
++			FIELD_PREP(DISPC_VID_BUF_THRESHOLD_BUFHIGHTHRESHOLD_MASK,
++				   high) |
++			FIELD_PREP(DISPC_VID_BUF_THRESHOLD_BUFLOWTHRESHOLD_MASK,
++				   low));
+ }
+ 
+ static void dispc_k2g_plane_init(struct dispc_device *dispc)
+@@ -2208,11 +2320,13 @@ static void dispc_k2g_plane_init(struct dispc_device *dispc)
+ 	dev_dbg(dispc->dev, "%s()\n", __func__);
+ 
+ 	/* MFLAG_CTRL = ENABLED */
+-	REG_FLD_MOD(dispc, DISPC_GLOBAL_MFLAG_ATTRIBUTE, 2, 1, 0);
++	REG_FLD_MOD(dispc, DISPC_GLOBAL_MFLAG_ATTRIBUTE, 2,
++		    DISPC_GLOBAL_MFLAG_ATTRIBUTE_MFLAG_CTRL_MASK);
+ 	/* MFLAG_START = MFLAGNORMALSTARTMODE */
+-	REG_FLD_MOD(dispc, DISPC_GLOBAL_MFLAG_ATTRIBUTE, 0, 6, 6);
++	REG_FLD_MOD(dispc, DISPC_GLOBAL_MFLAG_ATTRIBUTE, 0,
++		    DISPC_GLOBAL_MFLAG_ATTRIBUTE_MFLAG_START_MASK);
+ 
+-	for (hw_plane = 0; hw_plane < dispc->feat->num_planes; hw_plane++) {
++	for (hw_plane = 0; hw_plane < dispc->feat->num_vids; hw_plane++) {
+ 		u32 size = dispc_vid_get_fifo_size(dispc, hw_plane);
+ 		u32 thr_low, thr_high;
+ 		u32 mflag_low, mflag_high;
+@@ -2228,7 +2342,7 @@ static void dispc_k2g_plane_init(struct dispc_device *dispc)
+ 
+ 		dev_dbg(dispc->dev,
+ 			"%s: bufsize %u, buf_threshold %u/%u, mflag threshold %u/%u preload %u\n",
+-			dispc->feat->vid_name[hw_plane],
++			dispc->feat->vid_info[hw_plane].name,
+ 			size,
+ 			thr_high, thr_low,
+ 			mflag_high, mflag_low,
+@@ -2247,7 +2361,7 @@ static void dispc_k2g_plane_init(struct dispc_device *dispc)
+ 		 * register is ignored.
+ 		 */
+ 		VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, 1,
+-				19, 19);
++				DISPC_VID_ATTRIBUTES_BUFPRELOAD_MASK);
+ 	}
+ }
+ 
+@@ -2259,15 +2373,17 @@ static void dispc_k3_plane_init(struct dispc_device *dispc)
+ 
+ 	dev_dbg(dispc->dev, "%s()\n", __func__);
+ 
+-	REG_FLD_MOD(dispc, DSS_CBA_CFG, cba_lo_pri, 2, 0);
+-	REG_FLD_MOD(dispc, DSS_CBA_CFG, cba_hi_pri, 5, 3);
++	REG_FLD_MOD(dispc, DSS_CBA_CFG, cba_lo_pri, DSS_CBA_CFG_PRI_LO_MASK);
++	REG_FLD_MOD(dispc, DSS_CBA_CFG, cba_hi_pri, DSS_CBA_CFG_PRI_HI_MASK);
+ 
+ 	/* MFLAG_CTRL = ENABLED */
+-	REG_FLD_MOD(dispc, DISPC_GLOBAL_MFLAG_ATTRIBUTE, 2, 1, 0);
++	REG_FLD_MOD(dispc, DISPC_GLOBAL_MFLAG_ATTRIBUTE, 2,
++		    DISPC_GLOBAL_MFLAG_ATTRIBUTE_MFLAG_CTRL_MASK);
+ 	/* MFLAG_START = MFLAGNORMALSTARTMODE */
+-	REG_FLD_MOD(dispc, DISPC_GLOBAL_MFLAG_ATTRIBUTE, 0, 6, 6);
++	REG_FLD_MOD(dispc, DISPC_GLOBAL_MFLAG_ATTRIBUTE, 0,
++		    DISPC_GLOBAL_MFLAG_ATTRIBUTE_MFLAG_START_MASK);
+ 
+-	for (hw_plane = 0; hw_plane < dispc->feat->num_planes; hw_plane++) {
++	for (hw_plane = 0; hw_plane < dispc->feat->num_vids; hw_plane++) {
+ 		u32 size = dispc_vid_get_fifo_size(dispc, hw_plane);
+ 		u32 thr_low, thr_high;
+ 		u32 mflag_low, mflag_high;
+@@ -2283,7 +2399,7 @@ static void dispc_k3_plane_init(struct dispc_device *dispc)
+ 
+ 		dev_dbg(dispc->dev,
+ 			"%s: bufsize %u, buf_threshold %u/%u, mflag threshold %u/%u preload %u\n",
+-			dispc->feat->vid_name[hw_plane],
++			dispc->feat->vid_info[hw_plane].name,
+ 			size,
+ 			thr_high, thr_low,
+ 			mflag_high, mflag_low,
+@@ -2298,7 +2414,7 @@ static void dispc_k3_plane_init(struct dispc_device *dispc)
+ 
+ 		/* Prefech up to PRELOAD value */
+ 		VID_REG_FLD_MOD(dispc, hw_plane, DISPC_VID_ATTRIBUTES, 0,
+-				19, 19);
++				DISPC_VID_ATTRIBUTES_BUFPRELOAD_MASK);
+ 	}
+ }
+ 
+@@ -2310,6 +2426,7 @@ static void dispc_plane_init(struct dispc_device *dispc)
+ 		break;
+ 	case DISPC_AM625:
+ 	case DISPC_AM62A7:
++	case DISPC_AM62L:
+ 	case DISPC_AM65X:
+ 	case DISPC_J721E:
+ 		dispc_k3_plane_init(dispc);
+@@ -2327,7 +2444,8 @@ static void dispc_vp_init(struct dispc_device *dispc)
+ 
+ 	/* Enable the gamma Shadow bit-field for all VPs*/
+ 	for (i = 0; i < dispc->feat->num_vps; i++)
+-		VP_REG_FLD_MOD(dispc, i, DISPC_VP_CONFIG, 1, 2, 2);
++		VP_REG_FLD_MOD(dispc, i, DISPC_VP_CONFIG, 1,
++			       DISPC_VP_CONFIG_GAMMAENABLE_MASK);
+ }
+ 
+ static void dispc_initial_config(struct dispc_device *dispc)
+@@ -2338,8 +2456,8 @@ static void dispc_initial_config(struct dispc_device *dispc)
+ 	/* Note: Hardcoded DPI routing on J721E for now */
+ 	if (dispc->feat->subrev == DISPC_J721E) {
+ 		dispc_write(dispc, DISPC_CONNECTIONS,
+-			    FLD_VAL(2, 3, 0) |		/* VP1 to DPI0 */
+-			    FLD_VAL(8, 7, 4)		/* VP3 to DPI1 */
++			    FIELD_PREP(DISPC_CONNECTIONS_DPI_0_CONN_MASK, 2) |		/* VP1 to DPI0 */
++			    FIELD_PREP(DISPC_CONNECTIONS_DPI_1_CONN_MASK, 8)		/* VP3 to DPI1 */
+ 			);
+ 	}
+ }
+@@ -2418,6 +2536,7 @@ static void dispc_vp_write_gamma_table(struct dispc_device *dispc,
+ 		break;
+ 	case DISPC_AM625:
+ 	case DISPC_AM62A7:
++	case DISPC_AM62L:
+ 	case DISPC_AM65X:
+ 		dispc_am65x_vp_write_gamma_table(dispc, hw_videoport);
+ 		break;
+@@ -2516,8 +2635,8 @@ static void dispc_k2g_cpr_from_ctm(const struct drm_color_ctm *ctm,
+ 	cpr->m[CSC_BB] = dispc_S31_32_to_s2_8(ctm->matrix[8]);
+ }
+ 
+-#define CVAL(xR, xG, xB) (FLD_VAL(xR, 9, 0) | FLD_VAL(xG, 20, 11) |	\
+-			  FLD_VAL(xB, 31, 22))
++#define CVAL(xR, xG, xB) (FIELD_PREP(GENMASK(9, 0), xR) | FIELD_PREP(GENMASK(20, 11), xG) |	\
++			  FIELD_PREP(GENMASK(31, 22), xB))
+ 
+ static void dispc_k2g_vp_csc_cpr_regval(const struct dispc_csc_coef *csc,
+ 					u32 *regval)
+@@ -2559,8 +2678,8 @@ static void dispc_k2g_vp_set_ctm(struct dispc_device *dispc, u32 hw_videoport,
+ 		cprenable = 1;
+ 	}
+ 
+-	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONFIG,
+-		       cprenable, 15, 15);
++	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONFIG, cprenable,
++		       DISPC_VP_CONFIG_CPR_MASK);
+ }
+ 
+ static s16 dispc_S31_32_to_s3_8(s64 coef)
+@@ -2625,8 +2744,8 @@ static void dispc_k3_vp_set_ctm(struct dispc_device *dispc, u32 hw_videoport,
+ 		colorconvenable = 1;
+ 	}
+ 
+-	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONFIG,
+-		       colorconvenable, 24, 24);
++	VP_REG_FLD_MOD(dispc, hw_videoport, DISPC_VP_CONFIG, colorconvenable,
++		       DISPC_VP_CONFIG_COLORCONVENABLE_MASK);
+ }
+ 
+ static void dispc_vp_set_color_mgmt(struct dispc_device *dispc,
+@@ -2681,26 +2800,26 @@ int dispc_runtime_resume(struct dispc_device *dispc)
+ 
+ 	clk_prepare_enable(dispc->fclk);
+ 
+-	if (REG_GET(dispc, DSS_SYSSTATUS, 0, 0) == 0)
++	if (REG_GET(dispc, DSS_SYSSTATUS, DSS_SYSSTATUS_DISPC_FUNC_RESETDONE) == 0)
+ 		dev_warn(dispc->dev, "DSS FUNC RESET not done!\n");
+ 
+ 	dev_dbg(dispc->dev, "OMAP DSS7 rev 0x%x\n",
+ 		dispc_read(dispc, DSS_REVISION));
+ 
+ 	dev_dbg(dispc->dev, "VP RESETDONE %d,%d,%d\n",
+-		REG_GET(dispc, DSS_SYSSTATUS, 1, 1),
+-		REG_GET(dispc, DSS_SYSSTATUS, 2, 2),
+-		REG_GET(dispc, DSS_SYSSTATUS, 3, 3));
++		REG_GET(dispc, DSS_SYSSTATUS, GENMASK(1, 1)),
++		REG_GET(dispc, DSS_SYSSTATUS, GENMASK(2, 2)),
++		REG_GET(dispc, DSS_SYSSTATUS, GENMASK(3, 3)));
+ 
+ 	if (dispc->feat->subrev == DISPC_AM625 ||
+ 	    dispc->feat->subrev == DISPC_AM65X)
+ 		dev_dbg(dispc->dev, "OLDI RESETDONE %d,%d,%d\n",
+-			REG_GET(dispc, DSS_SYSSTATUS, 5, 5),
+-			REG_GET(dispc, DSS_SYSSTATUS, 6, 6),
+-			REG_GET(dispc, DSS_SYSSTATUS, 7, 7));
++			REG_GET(dispc, DSS_SYSSTATUS, GENMASK(5, 5)),
++			REG_GET(dispc, DSS_SYSSTATUS, GENMASK(6, 6)),
++			REG_GET(dispc, DSS_SYSSTATUS, GENMASK(7, 7)));
+ 
+ 	dev_dbg(dispc->dev, "DISPC IDLE %d\n",
+-		REG_GET(dispc, DSS_SYSSTATUS, 9, 9));
++		REG_GET(dispc, DSS_SYSSTATUS, DSS_SYSSTATUS_DISPC_IDLE_STATUS));
+ 
+ 	dispc_initial_config(dispc);
+ 
+@@ -2737,15 +2856,15 @@ static int dispc_iomap_resource(struct platform_device *pdev, const char *name,
+ static int dispc_init_am65x_oldi_io_ctrl(struct device *dev,
+ 					 struct dispc_device *dispc)
+ {
+-	dispc->oldi_io_ctrl =
++	dispc->am65x_oldi_io_ctrl =
+ 		syscon_regmap_lookup_by_phandle(dev->of_node,
+ 						"ti,am65x-oldi-io-ctrl");
+-	if (PTR_ERR(dispc->oldi_io_ctrl) == -ENODEV) {
+-		dispc->oldi_io_ctrl = NULL;
+-	} else if (IS_ERR(dispc->oldi_io_ctrl)) {
++	if (PTR_ERR(dispc->am65x_oldi_io_ctrl) == -ENODEV) {
++		dispc->am65x_oldi_io_ctrl = NULL;
++	} else if (IS_ERR(dispc->am65x_oldi_io_ctrl)) {
+ 		dev_err(dev, "%s: syscon_regmap_lookup_by_phandle failed %ld\n",
+-			__func__, PTR_ERR(dispc->oldi_io_ctrl));
+-		return PTR_ERR(dispc->oldi_io_ctrl);
++			__func__, PTR_ERR(dispc->am65x_oldi_io_ctrl));
++		return PTR_ERR(dispc->am65x_oldi_io_ctrl);
+ 	}
+ 	return 0;
+ }
+@@ -2771,13 +2890,14 @@ static void dispc_softreset_k2g(struct dispc_device *dispc)
+ {
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&dispc->tidss->wait_lock, flags);
++	spin_lock_irqsave(&dispc->tidss->irq_lock, flags);
+ 	dispc_set_irqenable(dispc, 0);
+ 	dispc_read_and_clear_irqstatus(dispc);
+-	spin_unlock_irqrestore(&dispc->tidss->wait_lock, flags);
++	spin_unlock_irqrestore(&dispc->tidss->irq_lock, flags);
+ 
+ 	for (unsigned int vp_idx = 0; vp_idx < dispc->feat->num_vps; ++vp_idx)
+-		VP_REG_FLD_MOD(dispc, vp_idx, DISPC_VP_CONTROL, 0, 0, 0);
++		VP_REG_FLD_MOD(dispc, vp_idx, DISPC_VP_CONTROL, 0,
++			       DISPC_VP_CONTROL_ENABLE_MASK);
+ }
+ 
+ static int dispc_softreset(struct dispc_device *dispc)
+@@ -2791,7 +2911,7 @@ static int dispc_softreset(struct dispc_device *dispc)
+ 	}
+ 
+ 	/* Soft reset */
+-	REG_FLD_MOD(dispc, DSS_SYSCONFIG, 1, 1, 1);
++	REG_FLD_MOD(dispc, DSS_SYSCONFIG, 1, DSS_SYSCONFIG_SOFTRESET_MASK);
+ 	/* Wait for reset to complete */
+ 	ret = readl_poll_timeout(dispc->base_common + DSS_SYSSTATUS,
+ 				 val, val & 1, 100, 5000);
+@@ -2900,8 +3020,8 @@ int dispc_init(struct tidss_device *tidss)
+ 	if (r)
+ 		return r;
+ 
+-	for (i = 0; i < dispc->feat->num_planes; i++) {
+-		r = dispc_iomap_resource(pdev, dispc->feat->vid_name[i],
++	for (i = 0; i < dispc->feat->num_vids; i++) {
++		r = dispc_iomap_resource(pdev, dispc->feat->vid_info[i].name,
+ 					 &dispc->base_vid[i]);
+ 		if (r)
+ 			return r;
+diff --git a/drivers/gpu/drm/tidss/tidss_dispc.h b/drivers/gpu/drm/tidss/tidss_dispc.h
+index 086327d51..42279312d 100644
+--- a/drivers/gpu/drm/tidss/tidss_dispc.h
++++ b/drivers/gpu/drm/tidss/tidss_dispc.h
+@@ -7,11 +7,14 @@
+ #ifndef __TIDSS_DISPC_H__
+ #define __TIDSS_DISPC_H__
+ 
++#include <drm/drm_color_mgmt.h>
++
+ #include "tidss_drv.h"
+ 
+ struct dispc_device;
+ 
+ struct drm_crtc_state;
++struct drm_plane_state;
+ 
+ enum tidss_gamma_type { TIDSS_GAMMA_8BIT, TIDSS_GAMMA_10BIT };
+ 
+@@ -46,13 +49,19 @@ struct dispc_features_scaling {
+ 	u32 xinc_max;
+ };
+ 
++struct dispc_vid_info {
++	const char *name; /* Should match dt reg names */
++	u32 hw_id;
++	bool is_lite;
++};
++
+ struct dispc_errata {
+ 	bool i2000; /* DSS Does Not Support YUV Pixel Data Formats */
+ };
+ 
+ enum dispc_vp_bus_type {
+ 	DISPC_VP_DPI,		/* DPI output */
+-	DISPC_VP_OLDI,		/* OLDI (LVDS) output */
++	DISPC_VP_OLDI_AM65X,	/* OLDI (LVDS) output for AM65x DSS */
+ 	DISPC_VP_INTERNAL,	/* SoC internal routing */
+ 	DISPC_VP_TIED_OFF,	/* Tied off / Unavailable */
+ 	DISPC_VP_MAX_BUS_TYPE,
+@@ -61,15 +70,13 @@ enum dispc_vp_bus_type {
+ enum dispc_dss_subrevision {
+ 	DISPC_K2G,
+ 	DISPC_AM625,
++	DISPC_AM62L,
+ 	DISPC_AM62A7,
+ 	DISPC_AM65X,
+ 	DISPC_J721E,
+ };
+ 
+ struct dispc_features {
+-	int min_pclk_khz;
+-	int max_pclk_khz[DISPC_VP_MAX_BUS_TYPE];
+-
+ 	struct dispc_features_scaling scaling;
+ 
+ 	enum dispc_dss_subrevision subrev;
+@@ -82,18 +89,23 @@ struct dispc_features {
+ 	const char *vpclk_name[TIDSS_MAX_PORTS]; /* Should match dt clk names */
+ 	const enum dispc_vp_bus_type vp_bus_type[TIDSS_MAX_PORTS];
+ 	struct tidss_vp_feat vp_feat;
+-	u32 num_planes;
+-	const char *vid_name[TIDSS_MAX_PLANES]; /* Should match dt reg names */
+-	bool vid_lite[TIDSS_MAX_PLANES];
++	u32 num_vids;
++	struct dispc_vid_info vid_info[TIDSS_MAX_PLANES];
+ 	u32 vid_order[TIDSS_MAX_PLANES];
+ };
+ 
+ extern const struct dispc_features dispc_k2g_feats;
+ extern const struct dispc_features dispc_am625_feats;
+ extern const struct dispc_features dispc_am62a7_feats;
++extern const struct dispc_features dispc_am62l_feats;
+ extern const struct dispc_features dispc_am65x_feats;
+ extern const struct dispc_features dispc_j721e_feats;
+ 
++int tidss_configure_oldi(struct tidss_device *tidss, u32 hw_videoport,
++			 u32 oldi_cfg);
++void tidss_disable_oldi(struct tidss_device *tidss, u32 hw_videoport);
++unsigned int dispc_pclk_diff(unsigned long rate, unsigned long real_rate);
++
+ void dispc_set_irqenable(struct dispc_device *dispc, dispc_irq_t mask);
+ dispc_irq_t dispc_read_and_clear_irqstatus(struct dispc_device *dispc);
+ 
+diff --git a/drivers/gpu/drm/tidss/tidss_dispc_regs.h b/drivers/gpu/drm/tidss/tidss_dispc_regs.h
+index 13feedfe5..382027ddd 100644
+--- a/drivers/gpu/drm/tidss/tidss_dispc_regs.h
++++ b/drivers/gpu/drm/tidss/tidss_dispc_regs.h
+@@ -49,14 +49,19 @@ enum dispc_common_regs {
+ /*
+  * dispc_common_regmap should be defined as const u16 * and pointing
+  * to a valid dss common register map for the platform, before the
+- * macros bellow can be used.
++ * macros below can be used.
+  */
+ 
+ #define REG(r) (dispc_common_regmap[r ## _OFF])
+ 
+ #define DSS_REVISION			REG(DSS_REVISION)
+ #define DSS_SYSCONFIG			REG(DSS_SYSCONFIG)
++#define DSS_SYSCONFIG_SOFTRESET_MASK		GENMASK(1, 1)
++
+ #define DSS_SYSSTATUS			REG(DSS_SYSSTATUS)
++#define DSS_SYSSTATUS_DISPC_IDLE_STATUS		GENMASK(9, 9)
++#define DSS_SYSSTATUS_DISPC_FUNC_RESETDONE	GENMASK(0, 0)
++
+ #define DISPC_IRQ_EOI			REG(DISPC_IRQ_EOI)
+ #define DISPC_IRQSTATUS_RAW		REG(DISPC_IRQSTATUS_RAW)
+ #define DISPC_IRQSTATUS			REG(DISPC_IRQSTATUS)
+@@ -70,9 +75,15 @@ enum dispc_common_regs {
+ #define WB_IRQSTATUS			REG(WB_IRQSTATUS)
+ 
+ #define DISPC_GLOBAL_MFLAG_ATTRIBUTE	REG(DISPC_GLOBAL_MFLAG_ATTRIBUTE)
++#define DISPC_GLOBAL_MFLAG_ATTRIBUTE_MFLAG_START_MASK	GENMASK(6, 6)
++#define DISPC_GLOBAL_MFLAG_ATTRIBUTE_MFLAG_CTRL_MASK	GENMASK(1, 0)
++
+ #define DISPC_GLOBAL_OUTPUT_ENABLE	REG(DISPC_GLOBAL_OUTPUT_ENABLE)
+ #define DISPC_GLOBAL_BUFFER		REG(DISPC_GLOBAL_BUFFER)
+ #define DSS_CBA_CFG			REG(DSS_CBA_CFG)
++#define DSS_CBA_CFG_PRI_HI_MASK			GENMASK(5, 3)
++#define DSS_CBA_CFG_PRI_LO_MASK			GENMASK(2, 0)
++
+ #define DISPC_DBG_CONTROL		REG(DISPC_DBG_CONTROL)
+ #define DISPC_DBG_STATUS		REG(DISPC_DBG_STATUS)
+ #define DISPC_CLKGATING_DISABLE		REG(DISPC_CLKGATING_DISABLE)
+@@ -88,6 +99,9 @@ enum dispc_common_regs {
+ #define FBDC_CONSTANT_COLOR_0		REG(FBDC_CONSTANT_COLOR_0)
+ #define FBDC_CONSTANT_COLOR_1		REG(FBDC_CONSTANT_COLOR_1)
+ #define DISPC_CONNECTIONS		REG(DISPC_CONNECTIONS)
++#define DISPC_CONNECTIONS_DPI_1_CONN_MASK	GENMASK(7, 4)
++#define DISPC_CONNECTIONS_DPI_0_CONN_MASK	GENMASK(3, 0)
++
+ #define DISPC_MSS_VP1			REG(DISPC_MSS_VP1)
+ #define DISPC_MSS_VP3			REG(DISPC_MSS_VP3)
+ 
+@@ -102,13 +116,27 @@ enum dispc_common_regs {
+ #define DISPC_VID_ACCUV2_0		0x18
+ #define DISPC_VID_ACCUV2_1		0x1c
+ #define DISPC_VID_ATTRIBUTES		0x20
++#define DISPC_VID_ATTRIBUTES_PREMULTIPLYALPHA_MASK	GENMASK(28, 28)
++#define DISPC_VID_ATTRIBUTES_VERTICALTAPS_MASK		GENMASK(21, 21)
++#define DISPC_VID_ATTRIBUTES_BUFPRELOAD_MASK		GENMASK(19, 19)
++#define DISPC_VID_ATTRIBUTES_COLORCONVENABLE_MASK	GENMASK(9, 9)
++#define DISPC_VID_ATTRIBUTES_VRESIZEENABLE_MASK		GENMASK(8, 8)
++#define DISPC_VID_ATTRIBUTES_HRESIZEENABLE_MASK		GENMASK(7, 7)
++#define DISPC_VID_ATTRIBUTES_FORMAT_MASK		GENMASK(6, 1)
++#define DISPC_VID_ATTRIBUTES_ENABLE_MASK		GENMASK(0, 0)
++
+ #define DISPC_VID_ATTRIBUTES2		0x24
+ #define DISPC_VID_BA_0			0x28
+ #define DISPC_VID_BA_1			0x2c
+ #define DISPC_VID_BA_UV_0		0x30
+ #define DISPC_VID_BA_UV_1		0x34
+ #define DISPC_VID_BUF_SIZE_STATUS	0x38
++#define DISPC_VID_BUF_SIZE_STATUS_BUFSIZE_MASK	GENMASK(15, 0)
++
+ #define DISPC_VID_BUF_THRESHOLD		0x3c
++#define DISPC_VID_BUF_THRESHOLD_BUFHIGHTHRESHOLD_MASK	GENMASK(31, 16)
++#define DISPC_VID_BUF_THRESHOLD_BUFLOWTHRESHOLD_MASK	GENMASK(15, 0)
++
+ #define DISPC_VID_CSC_COEF(n)		(0x40 + (n) * 4)
+ 
+ #define DISPC_VID_FIRH			0x5c
+@@ -137,15 +165,26 @@ enum dispc_common_regs {
+ #define DISPC_VID_FIR_COEF_V12_C(phase)	(0x1bc + (phase) * 4)
+ 
+ #define DISPC_VID_GLOBAL_ALPHA		0x1fc
++#define DISPC_VID_GLOBAL_ALPHA_GLOBALALPHA_MASK	GENMASK(7, 0)
++
+ #define DISPC_VID_K2G_IRQENABLE		0x200 /* K2G */
+ #define DISPC_VID_K2G_IRQSTATUS		0x204 /* K2G */
+ #define DISPC_VID_MFLAG_THRESHOLD	0x208
++#define DISPC_VID_MFLAG_THRESHOLD_HT_MFLAG_MASK	GENMASK(31, 16)
++#define DISPC_VID_MFLAG_THRESHOLD_LT_MFLAG_MASK	GENMASK(15, 0)
++
+ #define DISPC_VID_PICTURE_SIZE		0x20c
++#define DISPC_VID_PICTURE_SIZE_MEMSIZEY_MASK	GENMASK(27, 16)
++#define DISPC_VID_PICTURE_SIZE_MEMSIZEX_MASK	GENMASK(11, 0)
++
+ #define DISPC_VID_PIXEL_INC		0x210
+ #define DISPC_VID_K2G_POSITION		0x214 /* K2G */
+ #define DISPC_VID_PRELOAD		0x218
+ #define DISPC_VID_ROW_INC		0x21c
+ #define DISPC_VID_SIZE			0x220
++#define DISPC_VID_SIZE_SIZEY_MASK		GENMASK(27, 16)
++#define DISPC_VID_SIZE_SIZEX_MASK		GENMASK(11, 0)
++
+ #define DISPC_VID_BA_EXT_0		0x22c
+ #define DISPC_VID_BA_EXT_1		0x230
+ #define DISPC_VID_BA_UV_EXT_0		0x234
+@@ -173,11 +212,27 @@ enum dispc_common_regs {
+ #define DISPC_OVR_TRANS_COLOR_MIN	0x18
+ #define DISPC_OVR_TRANS_COLOR_MIN2	0x1c
+ #define DISPC_OVR_ATTRIBUTES(n)		(0x20 + (n) * 4)
++#define DISPC_OVR_ATTRIBUTES_POSY_MASK		GENMASK(30, 19)
++#define DISPC_OVR_ATTRIBUTES_POSX_MASK		GENMASK(17, 6)
++#define DISPC_OVR_ATTRIBUTES_CHANNELIN_MASK	GENMASK(4, 1)
++#define DISPC_OVR_ATTRIBUTES_ENABLE_MASK	GENMASK(0, 0)
++
+ #define DISPC_OVR_ATTRIBUTES2(n)	(0x34 + (n) * 4) /* J721E */
++#define DISPC_OVR_ATTRIBUTES2_POSY_MASK		GENMASK(29, 16)
++#define DISPC_OVR_ATTRIBUTES2_POSX_MASK		GENMASK(13, 0)
++
+ /* VP */
+ 
+ #define DISPC_VP_CONFIG				0x0
++#define DISPC_VP_CONFIG_COLORCONVENABLE_MASK		GENMASK(24, 24)
++#define DISPC_VP_CONFIG_CPR_MASK			GENMASK(15, 15)
++#define DISPC_VP_CONFIG_GAMMAENABLE_MASK		GENMASK(2, 2)
++
+ #define DISPC_VP_CONTROL			0x4
++#define DISPC_VP_CONTROL_DATALINES_MASK			GENMASK(10, 8)
++#define DISPC_VP_CONTROL_GOBIT_MASK			GENMASK(5, 5)
++#define DISPC_VP_CONTROL_ENABLE_MASK			GENMASK(0, 0)
++
+ #define DISPC_VP_CSC_COEF0			0x8
+ #define DISPC_VP_CSC_COEF1			0xc
+ #define DISPC_VP_CSC_COEF2			0x10
+@@ -189,9 +244,28 @@ enum dispc_common_regs {
+ #define DISPC_VP_DATA_CYCLE_2			0x1c
+ #define DISPC_VP_LINE_NUMBER			0x44
+ #define DISPC_VP_POL_FREQ			0x4c
++#define DISPC_VP_POL_FREQ_ALIGN_MASK			GENMASK(18, 18)
++#define DISPC_VP_POL_FREQ_ONOFF_MASK			GENMASK(17, 17)
++#define DISPC_VP_POL_FREQ_RF_MASK			GENMASK(16, 16)
++#define DISPC_VP_POL_FREQ_IEO_MASK			GENMASK(15, 15)
++#define DISPC_VP_POL_FREQ_IPC_MASK			GENMASK(14, 14)
++#define DISPC_VP_POL_FREQ_IHS_MASK			GENMASK(13, 13)
++#define DISPC_VP_POL_FREQ_IVS_MASK			GENMASK(12, 12)
++
+ #define DISPC_VP_SIZE_SCREEN			0x50
++#define DISPC_VP_SIZE_SCREEN_HDISPLAY_MASK		GENMASK(11, 0)
++#define DISPC_VP_SIZE_SCREEN_VDISPLAY_MASK		GENMASK(27, 16)
++
+ #define DISPC_VP_TIMING_H			0x54
++#define DISPC_VP_TIMING_H_SYNC_PULSE_MASK		GENMASK(7, 0)
++#define DISPC_VP_TIMING_H_FRONT_PORCH_MASK		GENMASK(19, 8)
++#define DISPC_VP_TIMING_H_BACK_PORCH_MASK		GENMASK(31, 20)
++
+ #define DISPC_VP_TIMING_V			0x58
++#define DISPC_VP_TIMING_V_SYNC_PULSE_MASK		GENMASK(7, 0)
++#define DISPC_VP_TIMING_V_FRONT_PORCH_MASK		GENMASK(19, 8)
++#define DISPC_VP_TIMING_V_BACK_PORCH_MASK		GENMASK(31, 20)
++
+ #define DISPC_VP_CSC_COEF3			0x5c
+ #define DISPC_VP_CSC_COEF4			0x60
+ #define DISPC_VP_CSC_COEF5			0x64
+@@ -220,24 +294,43 @@ enum dispc_common_regs {
+ #define DISPC_VP_SAFETY_LFSR_SEED		0x110
+ #define DISPC_VP_GAMMA_TABLE			0x120
+ #define DISPC_VP_DSS_OLDI_CFG			0x160
++#define DISPC_VP_DSS_OLDI_CFG_MAP_MASK			GENMASK(3, 1)
++
+ #define DISPC_VP_DSS_OLDI_STATUS		0x164
+ #define DISPC_VP_DSS_OLDI_LB			0x168
+ #define DISPC_VP_DSS_MERGE_SPLIT		0x16c /* J721E */
+ #define DISPC_VP_DSS_DMA_THREADSIZE		0x170 /* J721E */
+ #define DISPC_VP_DSS_DMA_THREADSIZE_STATUS	0x174 /* J721E */
+ 
++/* OLDI Config Bits (DISPC_VP_DSS_OLDI_CFG) */
++#define OLDI_ENABLE		BIT(0)
++#define OLDI_MAP		(BIT(1) | BIT(2) | BIT(3))
++#define OLDI_SRC		BIT(4)
++#define OLDI_CLONE_MODE		BIT(5)
++#define OLDI_MASTERSLAVE	BIT(6)
++#define OLDI_DEPOL		BIT(7)
++#define OLDI_MSB		BIT(8)
++#define OLDI_LBEN		BIT(9)
++#define OLDI_LBDATA		BIT(10)
++#define OLDI_DUALMODESYNC	BIT(11)
++#define OLDI_SOFTRST		BIT(12)
++#define OLDI_TPATCFG		BIT(13)
++
++/* LVDS Format values for OLDI_MAP field in DISPC_VP_OLDI_CFG register */
++enum oldi_mode_reg_val { SPWG_18 = 0, JEIDA_24 = 1, SPWG_24 = 2 };
++
+ /*
+  * OLDI IO_CTRL register offsets. On AM654 the registers are found
+  * from CTRL_MMR0, there the syscon regmap should map 0x14 bytes from
+  * CTRLMMR0P1_OLDI_DAT0_IO_CTRL to CTRLMMR0P1_OLDI_CLK_IO_CTRL
+  * register range.
+  */
+-#define OLDI_DAT0_IO_CTRL			0x00
+-#define OLDI_DAT1_IO_CTRL			0x04
+-#define OLDI_DAT2_IO_CTRL			0x08
+-#define OLDI_DAT3_IO_CTRL			0x0C
+-#define OLDI_CLK_IO_CTRL			0x10
++#define AM65X_OLDI_DAT0_IO_CTRL		0x00
++#define AM65X_OLDI_DAT1_IO_CTRL		0x04
++#define AM65X_OLDI_DAT2_IO_CTRL		0x08
++#define AM65X_OLDI_DAT3_IO_CTRL		0x0C
++#define AM65X_OLDI_CLK_IO_CTRL		0x10
+ 
+-#define OLDI_PWRDN_TX				BIT(8)
++#define AM65X_OLDI_PWRDN_TX		BIT(8)
+ 
+ #endif /* __TIDSS_DISPC_REGS_H */
+diff --git a/drivers/gpu/drm/tidss/tidss_drv.c b/drivers/gpu/drm/tidss/tidss_drv.c
+index d15f836dc..27d9a8fd5 100644
+--- a/drivers/gpu/drm/tidss/tidss_drv.c
++++ b/drivers/gpu/drm/tidss/tidss_drv.c
+@@ -8,7 +8,9 @@
+ #include <linux/of.h>
+ #include <linux/module.h>
+ #include <linux/pm_runtime.h>
++#include <linux/aperture.h>
+ 
++#include <drm/clients/drm_client_setup.h>
+ #include <drm/drm_atomic.h>
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_crtc.h>
+@@ -23,6 +25,7 @@
+ #include "tidss_drv.h"
+ #include "tidss_kms.h"
+ #include "tidss_irq.h"
++#include "tidss_oldi.h"
+ 
+ /* Power management */
+ 
+@@ -109,9 +112,9 @@ static const struct drm_driver tidss_driver = {
+ 	.fops			= &tidss_fops,
+ 	.release		= tidss_release,
+ 	DRM_GEM_DMA_DRIVER_OPS_VMAP,
++	DRM_FBDEV_DMA_DRIVER_OPS,
+ 	.name			= "tidss",
+ 	.desc			= "TI Keystone DSS",
+-	.date			= "20180215",
+ 	.major			= 1,
+ 	.minor			= 0,
+ };
+@@ -138,7 +141,7 @@ static int tidss_probe(struct platform_device *pdev)
+ 
+ 	platform_set_drvdata(pdev, tidss);
+ 
+-	spin_lock_init(&tidss->wait_lock);
++	spin_lock_init(&tidss->irq_lock);
+ 
+ 	ret = dispc_init(tidss);
+ 	if (ret) {
+@@ -146,6 +149,10 @@ static int tidss_probe(struct platform_device *pdev)
+ 		return ret;
+ 	}
+ 
++	ret = tidss_oldi_init(tidss);
++	if (ret)
++		return dev_err_probe(dev, ret, "failed to init OLDI\n");
++
+ 	pm_runtime_enable(dev);
+ 
+ 	pm_runtime_set_autosuspend_delay(dev, 1000);
+@@ -186,12 +193,20 @@ static int tidss_probe(struct platform_device *pdev)
+ 		goto err_irq_uninstall;
+ 	}
+ 
+-	drm_fbdev_dma_setup(ddev, 32);
++	/* Remove possible early fb before setting up the fbdev */
++	ret = aperture_remove_all_conflicting_devices(tidss_driver.name);
++	if (ret)
++		goto err_drm_dev_unreg;
++
++	drm_client_setup(ddev, NULL);
+ 
+ 	dev_dbg(dev, "%s done\n", __func__);
+ 
+ 	return 0;
+ 
++err_drm_dev_unreg:
++	drm_dev_unregister(ddev);
++
+ err_irq_uninstall:
+ 	tidss_irq_uninstall(ddev);
+ 
+@@ -202,6 +217,8 @@ static int tidss_probe(struct platform_device *pdev)
+ 	pm_runtime_dont_use_autosuspend(dev);
+ 	pm_runtime_disable(dev);
+ 
++	tidss_oldi_deinit(tidss);
++
+ 	return ret;
+ }
+ 
+@@ -226,6 +243,8 @@ static void tidss_remove(struct platform_device *pdev)
+ 	pm_runtime_dont_use_autosuspend(dev);
+ 	pm_runtime_disable(dev);
+ 
++	tidss_oldi_deinit(tidss);
++
+ 	/* devm allocated dispc goes away with the dev so mark it NULL */
+ 	dispc_remove(tidss);
+ 
+@@ -241,6 +260,7 @@ static const struct of_device_id tidss_of_table[] = {
+ 	{ .compatible = "ti,k2g-dss", .data = &dispc_k2g_feats, },
+ 	{ .compatible = "ti,am625-dss", .data = &dispc_am625_feats, },
+ 	{ .compatible = "ti,am62a7-dss", .data = &dispc_am62a7_feats, },
++	{ .compatible = "ti,am62l-dss", .data = &dispc_am62l_feats, },
+ 	{ .compatible = "ti,am65x-dss", .data = &dispc_am65x_feats, },
+ 	{ .compatible = "ti,j721e-dss", .data = &dispc_j721e_feats, },
+ 	{ }
+@@ -250,7 +270,7 @@ MODULE_DEVICE_TABLE(of, tidss_of_table);
+ 
+ static struct platform_driver tidss_platform_driver = {
+ 	.probe		= tidss_probe,
+-	.remove_new	= tidss_remove,
++	.remove		= tidss_remove,
+ 	.shutdown	= tidss_shutdown,
+ 	.driver		= {
+ 		.name	= "tidss",
+diff --git a/drivers/gpu/drm/tidss/tidss_drv.h b/drivers/gpu/drm/tidss/tidss_drv.h
+index d7f27b0b0..e1c1f41d8 100644
+--- a/drivers/gpu/drm/tidss/tidss_drv.h
++++ b/drivers/gpu/drm/tidss/tidss_drv.h
+@@ -9,10 +9,14 @@
+ 
+ #include <linux/spinlock.h>
+ 
++#include <drm/drm_device.h>
++
+ #define TIDSS_MAX_PORTS 4
+ #define TIDSS_MAX_PLANES 4
++#define TIDSS_MAX_OLDI_TXES 2
+ 
+ typedef u32 dispc_irq_t;
++struct tidss_oldi;
+ 
+ struct tidss_device {
+ 	struct drm_device ddev;		/* DRM device for DSS */
+@@ -20,6 +24,8 @@ struct tidss_device {
+ 
+ 	const struct dispc_features *feat;
+ 	struct dispc_device *dispc;
++	bool is_ext_vp_clk[TIDSS_MAX_PORTS];
++
+ 
+ 	unsigned int num_crtcs;
+ 	struct drm_crtc *crtcs[TIDSS_MAX_PORTS];
+@@ -27,10 +33,14 @@ struct tidss_device {
+ 	unsigned int num_planes;
+ 	struct drm_plane *planes[TIDSS_MAX_PLANES];
+ 
++	unsigned int num_oldis;
++	struct tidss_oldi *oldis[TIDSS_MAX_OLDI_TXES];
++
+ 	unsigned int irq;
+ 
+-	spinlock_t wait_lock;	/* protects the irq masks */
+-	dispc_irq_t irq_mask;	/* enabled irqs in addition to wait_list */
++	/* protects the irq masks field and irqenable/irqstatus registers */
++	spinlock_t irq_lock;
++	dispc_irq_t irq_mask;	/* enabled irqs */
+ };
+ 
+ #define to_tidss(__dev) container_of(__dev, struct tidss_device, ddev)
+diff --git a/drivers/gpu/drm/tidss/tidss_encoder.c b/drivers/gpu/drm/tidss/tidss_encoder.c
+index 17a86bed8..db467bbcd 100644
+--- a/drivers/gpu/drm/tidss/tidss_encoder.c
++++ b/drivers/gpu/drm/tidss/tidss_encoder.c
+@@ -34,11 +34,12 @@ static inline struct tidss_encoder
+ }
+ 
+ static int tidss_bridge_attach(struct drm_bridge *bridge,
++			       struct drm_encoder *encoder,
+ 			       enum drm_bridge_attach_flags flags)
+ {
+ 	struct tidss_encoder *t_enc = bridge_to_tidss_encoder(bridge);
+ 
+-	return drm_bridge_attach(bridge->encoder, t_enc->next_bridge,
++	return drm_bridge_attach(encoder, t_enc->next_bridge,
+ 				 bridge, flags);
+ }
+ 
+@@ -89,18 +90,24 @@ int tidss_encoder_create(struct tidss_device *tidss,
+ 	struct drm_connector *connector;
+ 	int ret;
+ 
+-	t_enc = drmm_simple_encoder_alloc(&tidss->ddev, struct tidss_encoder,
+-					  encoder, encoder_type);
++	t_enc = devm_drm_bridge_alloc(tidss->dev, struct tidss_encoder,
++				      bridge, &tidss_bridge_funcs);
+ 	if (IS_ERR(t_enc))
+ 		return PTR_ERR(t_enc);
+ 
++	ret = drm_simple_encoder_init(&tidss->ddev, &t_enc->encoder,
++				      encoder_type);
++	if (ret)
++		return ret;
++
+ 	t_enc->tidss = tidss;
+ 	t_enc->next_bridge = next_bridge;
+-	t_enc->bridge.funcs = &tidss_bridge_funcs;
+ 
+ 	enc = &t_enc->encoder;
+ 	enc->possible_crtcs = possible_crtcs;
+ 
++	devm_drm_bridge_add(tidss->dev, &t_enc->bridge);
++
+ 	/* Attaching first bridge to the encoder */
+ 	ret = drm_bridge_attach(enc, &t_enc->bridge, NULL,
+ 				DRM_BRIDGE_ATTACH_NO_CONNECTOR);
+diff --git a/drivers/gpu/drm/tidss/tidss_irq.c b/drivers/gpu/drm/tidss/tidss_irq.c
+index d053dbb9d..5abc78878 100644
+--- a/drivers/gpu/drm/tidss/tidss_irq.c
++++ b/drivers/gpu/drm/tidss/tidss_irq.c
+@@ -15,10 +15,9 @@
+ #include "tidss_irq.h"
+ #include "tidss_plane.h"
+ 
+-/* call with wait_lock and dispc runtime held */
+ static void tidss_irq_update(struct tidss_device *tidss)
+ {
+-	assert_spin_locked(&tidss->wait_lock);
++	assert_spin_locked(&tidss->irq_lock);
+ 
+ 	dispc_set_irqenable(tidss->dispc, tidss->irq_mask);
+ }
+@@ -31,11 +30,11 @@ void tidss_irq_enable_vblank(struct drm_crtc *crtc)
+ 	u32 hw_videoport = tcrtc->hw_videoport;
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&tidss->wait_lock, flags);
++	spin_lock_irqsave(&tidss->irq_lock, flags);
+ 	tidss->irq_mask |= DSS_IRQ_VP_VSYNC_EVEN(hw_videoport) |
+ 			   DSS_IRQ_VP_VSYNC_ODD(hw_videoport);
+ 	tidss_irq_update(tidss);
+-	spin_unlock_irqrestore(&tidss->wait_lock, flags);
++	spin_unlock_irqrestore(&tidss->irq_lock, flags);
+ }
+ 
+ void tidss_irq_disable_vblank(struct drm_crtc *crtc)
+@@ -46,11 +45,11 @@ void tidss_irq_disable_vblank(struct drm_crtc *crtc)
+ 	u32 hw_videoport = tcrtc->hw_videoport;
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&tidss->wait_lock, flags);
++	spin_lock_irqsave(&tidss->irq_lock, flags);
+ 	tidss->irq_mask &= ~(DSS_IRQ_VP_VSYNC_EVEN(hw_videoport) |
+ 			     DSS_IRQ_VP_VSYNC_ODD(hw_videoport));
+ 	tidss_irq_update(tidss);
+-	spin_unlock_irqrestore(&tidss->wait_lock, flags);
++	spin_unlock_irqrestore(&tidss->irq_lock, flags);
+ }
+ 
+ static irqreturn_t tidss_irq_handler(int irq, void *arg)
+@@ -60,9 +59,9 @@ static irqreturn_t tidss_irq_handler(int irq, void *arg)
+ 	unsigned int id;
+ 	dispc_irq_t irqstatus;
+ 
+-	spin_lock(&tidss->wait_lock);
++	spin_lock(&tidss->irq_lock);
+ 	irqstatus = dispc_read_and_clear_irqstatus(tidss->dispc);
+-	spin_unlock(&tidss->wait_lock);
++	spin_unlock(&tidss->irq_lock);
+ 
+ 	for (id = 0; id < tidss->num_crtcs; id++) {
+ 		struct drm_crtc *crtc = tidss->crtcs[id];
+@@ -80,8 +79,13 @@ static irqreturn_t tidss_irq_handler(int irq, void *arg)
+ 			tidss_crtc_error_irq(crtc, irqstatus);
+ 	}
+ 
+-	if (irqstatus & DSS_IRQ_DEVICE_OCP_ERR)
+-		dev_err_ratelimited(tidss->dev, "OCP error\n");
++	for (unsigned int i = 0; i < tidss->num_planes; ++i) {
++		struct drm_plane *plane = tidss->planes[i];
++		struct tidss_plane *tplane = to_tidss_plane(plane);
++
++		if (irqstatus & DSS_IRQ_PLANE_FIFO_UNDERFLOW(tplane->hw_plane_id))
++			tidss_plane_error_irq(plane, irqstatus);
++	}
+ 
+ 	return IRQ_HANDLED;
+ }
+@@ -90,9 +94,9 @@ void tidss_irq_resume(struct tidss_device *tidss)
+ {
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&tidss->wait_lock, flags);
++	spin_lock_irqsave(&tidss->irq_lock, flags);
+ 	tidss_irq_update(tidss);
+-	spin_unlock_irqrestore(&tidss->wait_lock, flags);
++	spin_unlock_irqrestore(&tidss->irq_lock, flags);
+ }
+ 
+ int tidss_irq_install(struct drm_device *ddev, unsigned int irq)
+@@ -107,7 +111,7 @@ int tidss_irq_install(struct drm_device *ddev, unsigned int irq)
+ 	if (ret)
+ 		return ret;
+ 
+-	tidss->irq_mask = DSS_IRQ_DEVICE_OCP_ERR;
++	tidss->irq_mask = 0;
+ 
+ 	for (unsigned int i = 0; i < tidss->num_crtcs; ++i) {
+ 		struct tidss_crtc *tcrtc = to_tidss_crtc(tidss->crtcs[i]);
+@@ -117,6 +121,12 @@ int tidss_irq_install(struct drm_device *ddev, unsigned int irq)
+ 		tidss->irq_mask |= DSS_IRQ_VP_FRAME_DONE(tcrtc->hw_videoport);
+ 	}
+ 
++	for (unsigned int i = 0; i < tidss->num_planes; ++i) {
++		struct tidss_plane *tplane = to_tidss_plane(tidss->planes[i]);
++
++		tidss->irq_mask |= DSS_IRQ_PLANE_FIFO_UNDERFLOW(tplane->hw_plane_id);
++	}
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/gpu/drm/tidss/tidss_irq.h b/drivers/gpu/drm/tidss/tidss_irq.h
+index b512614d5..dd61f645f 100644
+--- a/drivers/gpu/drm/tidss/tidss_irq.h
++++ b/drivers/gpu/drm/tidss/tidss_irq.h
+@@ -19,15 +19,13 @@
+  * bit use   |D  |fou|FEOL|FEOL|FEOL|FEOL|  UUUU  |          |
+  * bit number|0  |1-3|4-7 |8-11|  12-19  | 20-23  |  24-31   |
+  *
+- * device bits:	D = OCP error
++ * device bits:	D = Unused
+  * WB bits:	f = frame done wb, o = wb buffer overflow,
+  *		u = wb buffer uncomplete
+  * vp bits:	F = frame done, E = vsync even, O = vsync odd, L = sync lost
+  * plane bits:	U = fifo underflow
+  */
+ 
+-#define DSS_IRQ_DEVICE_OCP_ERR			BIT(0)
+-
+ #define DSS_IRQ_DEVICE_FRAMEDONEWB		BIT(1)
+ #define DSS_IRQ_DEVICE_WBBUFFEROVERFLOW		BIT(2)
+ #define DSS_IRQ_DEVICE_WBUNCOMPLETEERROR	BIT(3)
+diff --git a/drivers/gpu/drm/tidss/tidss_kms.c b/drivers/gpu/drm/tidss/tidss_kms.c
+index bc385d31e..838111e11 100644
+--- a/drivers/gpu/drm/tidss/tidss_kms.c
++++ b/drivers/gpu/drm/tidss/tidss_kms.c
+@@ -28,9 +28,33 @@ static void tidss_atomic_commit_tail(struct drm_atomic_state *old_state)
+ 
+ 	tidss_runtime_get(tidss);
+ 
+-	drm_atomic_helper_commit_modeset_disables(ddev, old_state);
+-	drm_atomic_helper_commit_planes(ddev, old_state, DRM_PLANE_COMMIT_ACTIVE_ONLY);
+-	drm_atomic_helper_commit_modeset_enables(ddev, old_state);
++	/*
++	 * TI's OLDI and DSI encoders need to be set up before the crtc is
++	 * enabled. Thus drm_atomic_helper_commit_modeset_enables() and
++	 * drm_atomic_helper_commit_modeset_disables() cannot be used here, as
++	 * they enable the crtc before bridges' pre-enable, and disable the crtc
++	 * after bridges' post-disable.
++	 *
++	 * Open code the functions here and first call the bridges' pre-enables,
++	 * then crtc enable, then bridges' post-enable (and vice versa for
++	 * disable).
++	 */
++
++	drm_atomic_helper_commit_encoder_bridge_disable(ddev, old_state);
++	drm_atomic_helper_commit_crtc_disable(ddev, old_state);
++	drm_atomic_helper_commit_encoder_bridge_post_disable(ddev, old_state);
++
++	drm_atomic_helper_update_legacy_modeset_state(ddev, old_state);
++	drm_atomic_helper_calc_timestamping_constants(old_state);
++	drm_atomic_helper_commit_crtc_set_mode(ddev, old_state);
++
++	drm_atomic_helper_commit_planes(ddev, old_state,
++					DRM_PLANE_COMMIT_ACTIVE_ONLY);
++
++	drm_atomic_helper_commit_encoder_bridge_pre_enable(ddev, old_state);
++	drm_atomic_helper_commit_crtc_enable(ddev, old_state);
++	drm_atomic_helper_commit_encoder_bridge_enable(ddev, old_state);
++	drm_atomic_helper_commit_writebacks(ddev, old_state);
+ 
+ 	drm_atomic_helper_commit_hw_done(old_state);
+ 	drm_atomic_helper_wait_for_flip_done(ddev, old_state);
+@@ -115,7 +139,7 @@ static int tidss_dispc_modeset_init(struct tidss_device *tidss)
+ 
+ 	const struct dispc_features *feat = tidss->feat;
+ 	u32 max_vps = feat->num_vps;
+-	u32 max_planes = feat->num_planes;
++	u32 max_planes = feat->num_vids;
+ 
+ 	struct pipe pipes[TIDSS_MAX_PORTS];
+ 	u32 num_pipes = 0;
+@@ -144,7 +168,7 @@ static int tidss_dispc_modeset_init(struct tidss_device *tidss)
+ 			dev_dbg(dev, "Setting up panel for port %d\n", i);
+ 
+ 			switch (feat->vp_bus_type[i]) {
+-			case DISPC_VP_OLDI:
++			case DISPC_VP_OLDI_AM65X:
+ 				enc_type = DRM_MODE_ENCODER_LVDS;
+ 				conn_type = DRM_MODE_CONNECTOR_LVDS;
+ 				break;
+diff --git a/drivers/gpu/drm/tidss/tidss_oldi.c b/drivers/gpu/drm/tidss/tidss_oldi.c
+new file mode 100644
+index 000000000..17c535bfa
+--- /dev/null
++++ b/drivers/gpu/drm/tidss/tidss_oldi.c
+@@ -0,0 +1,619 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Copyright (C) 2025 - Texas Instruments Incorporated
++ *
++ * Aradhya Bhatia <a-bhatia1@ti.com>
++ */
++
++#include <linux/clk.h>
++#include <linux/of.h>
++#include <linux/of_graph.h>
++#include <linux/mfd/syscon.h>
++#include <linux/media-bus-format.h>
++#include <linux/regmap.h>
++
++#include <drm/drm_atomic_helper.h>
++#include <drm/drm_bridge.h>
++#include <drm/drm_of.h>
++
++#include "tidss_dispc.h"
++#include "tidss_dispc_regs.h"
++#include "tidss_oldi.h"
++
++struct tidss_oldi {
++	struct tidss_device	*tidss;
++	struct device		*dev;
++
++	struct drm_bridge	bridge;
++	struct drm_bridge	*next_bridge;
++
++	enum tidss_oldi_link_type link_type;
++	const struct oldi_bus_format *bus_format;
++	u32 oldi_instance;
++	int companion_instance;	/* -1 when OLDI TX operates in Single-Link */
++	u32 parent_vp;
++
++	struct clk *serial;
++	struct regmap *io_ctrl;
++};
++
++struct oldi_bus_format {
++	u32 bus_fmt;
++	u32 data_width;
++	enum oldi_mode_reg_val oldi_mode_reg_val;
++	u32 input_bus_fmt;
++};
++
++static const struct oldi_bus_format oldi_bus_formats[] = {
++	{ MEDIA_BUS_FMT_RGB666_1X7X3_SPWG,	18, SPWG_18,	MEDIA_BUS_FMT_RGB666_1X18 },
++	{ MEDIA_BUS_FMT_RGB888_1X7X4_SPWG,	24, SPWG_24,	MEDIA_BUS_FMT_RGB888_1X24 },
++	{ MEDIA_BUS_FMT_RGB888_1X7X4_JEIDA,	24, JEIDA_24,	MEDIA_BUS_FMT_RGB888_1X24 },
++};
++
++#define OLDI_IDLE_CLK_HZ	25000000 /*25 MHz */
++
++static inline struct tidss_oldi *
++drm_bridge_to_tidss_oldi(struct drm_bridge *bridge)
++{
++	return container_of(bridge, struct tidss_oldi, bridge);
++}
++
++static int tidss_oldi_bridge_attach(struct drm_bridge *bridge,
++				    struct drm_encoder *encoder,
++				    enum drm_bridge_attach_flags flags)
++{
++	struct tidss_oldi *oldi = drm_bridge_to_tidss_oldi(bridge);
++
++	if (!oldi->next_bridge) {
++		dev_err(oldi->dev,
++			"%s: OLDI%u Failure attach next bridge\n",
++			__func__, oldi->oldi_instance);
++		return -ENODEV;
++	}
++
++	if (!(flags & DRM_BRIDGE_ATTACH_NO_CONNECTOR)) {
++		dev_err(oldi->dev,
++			"%s: OLDI%u DRM_BRIDGE_ATTACH_NO_CONNECTOR is mandatory.\n",
++			__func__, oldi->oldi_instance);
++		return -EINVAL;
++	}
++
++	return drm_bridge_attach(encoder, oldi->next_bridge, bridge, flags);
++}
++
++static int
++tidss_oldi_set_serial_clk(struct tidss_oldi *oldi, unsigned long rate)
++{
++	unsigned long new_rate;
++	int ret;
++
++	ret = clk_set_rate(oldi->serial, rate);
++	if (ret) {
++		dev_err(oldi->dev,
++			"OLDI%u: failed to set serial clk rate to %lu Hz\n",
++			 oldi->oldi_instance, rate);
++		return ret;
++	}
++
++	new_rate = clk_get_rate(oldi->serial);
++
++	if (dispc_pclk_diff(rate, new_rate) > 5)
++		dev_warn(oldi->dev,
++			 "OLDI%u Clock rate %lu differs over 5%% from requested %lu\n",
++			 oldi->oldi_instance, new_rate, rate);
++
++	dev_dbg(oldi->dev, "OLDI%u: new rate %lu Hz (requested %lu Hz)\n",
++		oldi->oldi_instance, clk_get_rate(oldi->serial), rate);
++
++	return 0;
++}
++
++static void tidss_oldi_tx_power(struct tidss_oldi *oldi, bool enable)
++{
++	u32 mask;
++
++	/*
++	 * The power control bits are Active Low, and remain powered off by
++	 * default. That is, the bits are set to 1. To power on the OLDI TXes,
++	 * the bits must be cleared to 0. Since there are cases where not all
++	 * OLDI TXes are being used, the power logic selectively powers them
++	 * on.
++	 * Setting the variable 'val' to particular bit masks, makes sure that
++	 * the undesired OLDI TXes remain powered off.
++	 */
++
++	if (enable) {
++		switch (oldi->link_type) {
++		case OLDI_MODE_SINGLE_LINK:
++			/* Power-on only the required OLDI TX's IO*/
++			mask = OLDI_PWRDOWN_TX(oldi->oldi_instance) | OLDI_PWRDN_BG;
++			break;
++		case OLDI_MODE_CLONE_SINGLE_LINK:
++		case OLDI_MODE_DUAL_LINK:
++			/* Power-on both the OLDI TXes' IOs */
++			mask = OLDI_PWRDOWN_TX(oldi->oldi_instance) |
++			       OLDI_PWRDOWN_TX(oldi->companion_instance) |
++			       OLDI_PWRDN_BG;
++			break;
++		default:
++			/*
++			 * This code execution should never reach here as any
++			 * OLDI with an unsupported OLDI mode would never get
++			 * registered in the first place.
++			 * However, power-off the OLDI in concern just in case.
++			 */
++			mask = OLDI_PWRDOWN_TX(oldi->oldi_instance);
++			enable = false;
++			break;
++		}
++	} else {
++		switch (oldi->link_type) {
++		case OLDI_MODE_CLONE_SINGLE_LINK:
++		case OLDI_MODE_DUAL_LINK:
++			mask = OLDI_PWRDOWN_TX(oldi->oldi_instance) |
++			       OLDI_PWRDOWN_TX(oldi->companion_instance) |
++			       OLDI_PWRDN_BG;
++			break;
++		case OLDI_MODE_SINGLE_LINK:
++		default:
++			mask = OLDI_PWRDOWN_TX(oldi->oldi_instance);
++			break;
++		}
++	}
++
++	regmap_update_bits(oldi->io_ctrl, OLDI_PD_CTRL, mask, enable ? 0 : mask);
++}
++
++static int tidss_oldi_config(struct tidss_oldi *oldi)
++{
++	const struct oldi_bus_format *bus_fmt = NULL;
++	u32 oldi_cfg = 0;
++	int ret;
++
++	bus_fmt = oldi->bus_format;
++
++	/*
++	 * MASTERSLAVE and SRC bits of OLDI Config are always set to 0.
++	 */
++
++	if (bus_fmt->data_width == 24)
++		oldi_cfg |= OLDI_MSB;
++	else if (bus_fmt->data_width != 18)
++		dev_warn(oldi->dev,
++			 "OLDI%u: DSS port width %d not supported\n",
++			 oldi->oldi_instance, bus_fmt->data_width);
++
++	oldi_cfg |= OLDI_DEPOL;
++
++	oldi_cfg = (oldi_cfg & (~OLDI_MAP)) | (bus_fmt->oldi_mode_reg_val << 1);
++
++	oldi_cfg |= OLDI_SOFTRST;
++
++	oldi_cfg |= OLDI_ENABLE;
++
++	switch (oldi->link_type) {
++	case OLDI_MODE_SINGLE_LINK:
++		/* All configuration is done for this mode.  */
++		break;
++
++	case OLDI_MODE_CLONE_SINGLE_LINK:
++		oldi_cfg |= OLDI_CLONE_MODE;
++		break;
++
++	case OLDI_MODE_DUAL_LINK:
++		/* data-mapping field also indicates dual-link mode */
++		oldi_cfg |= BIT(3);
++		oldi_cfg |= OLDI_DUALMODESYNC;
++		break;
++
++	default:
++		dev_err(oldi->dev, "OLDI%u: Unsupported mode.\n",
++			oldi->oldi_instance);
++		return -EINVAL;
++	}
++
++	ret = tidss_configure_oldi(oldi->tidss, oldi->parent_vp, oldi_cfg);
++	if (ret == -ETIMEDOUT)
++		dev_warn(oldi->dev, "OLDI%u: timeout waiting for OLDI reset done.\n",
++			 oldi->oldi_instance);
++
++	return ret;
++}
++
++static void tidss_oldi_atomic_pre_enable(struct drm_bridge *bridge,
++					 struct drm_atomic_state *state)
++{
++	struct tidss_oldi *oldi = drm_bridge_to_tidss_oldi(bridge);
++	struct drm_connector *connector;
++	struct drm_connector_state *conn_state;
++	struct drm_crtc_state *crtc_state;
++	struct drm_display_mode *mode;
++
++	if (oldi->link_type == OLDI_MODE_SECONDARY_CLONE_SINGLE_LINK)
++		return;
++
++	connector = drm_atomic_get_new_connector_for_encoder(state,
++							     bridge->encoder);
++	if (WARN_ON(!connector))
++		return;
++
++	conn_state = drm_atomic_get_new_connector_state(state, connector);
++	if (WARN_ON(!conn_state))
++		return;
++
++	crtc_state = drm_atomic_get_new_crtc_state(state, conn_state->crtc);
++	if (WARN_ON(!crtc_state))
++		return;
++
++	mode = &crtc_state->adjusted_mode;
++
++	/* Configure the OLDI params*/
++	tidss_oldi_config(oldi);
++
++	/* Set the OLDI serial clock (7 times the pixel clock) */
++	tidss_oldi_set_serial_clk(oldi, mode->clock * 7 * 1000);
++
++	/* Enable OLDI IO power */
++	tidss_oldi_tx_power(oldi, true);
++}
++
++static void tidss_oldi_atomic_post_disable(struct drm_bridge *bridge,
++					   struct drm_atomic_state *state)
++{
++	struct tidss_oldi *oldi = drm_bridge_to_tidss_oldi(bridge);
++
++	if (oldi->link_type == OLDI_MODE_SECONDARY_CLONE_SINGLE_LINK)
++		return;
++
++	/* Disable OLDI IO power */
++	tidss_oldi_tx_power(oldi, false);
++
++	/* Set the OLDI serial clock to IDLE Frequency */
++	tidss_oldi_set_serial_clk(oldi, OLDI_IDLE_CLK_HZ);
++
++	/* Clear OLDI Config */
++	tidss_disable_oldi(oldi->tidss, oldi->parent_vp);
++}
++
++#define MAX_INPUT_SEL_FORMATS	1
++
++static u32 *tidss_oldi_atomic_get_input_bus_fmts(struct drm_bridge *bridge,
++						 struct drm_bridge_state *bridge_state,
++						 struct drm_crtc_state *crtc_state,
++						 struct drm_connector_state *conn_state,
++						 u32 output_fmt,
++						 unsigned int *num_input_fmts)
++{
++	struct tidss_oldi *oldi = drm_bridge_to_tidss_oldi(bridge);
++	u32 *input_fmts;
++	int i;
++
++	*num_input_fmts = 0;
++
++	for (i = 0; i < ARRAY_SIZE(oldi_bus_formats); i++)
++		if (oldi_bus_formats[i].bus_fmt == output_fmt)
++			break;
++
++	if (i == ARRAY_SIZE(oldi_bus_formats))
++		return NULL;
++
++	input_fmts = kcalloc(MAX_INPUT_SEL_FORMATS, sizeof(*input_fmts),
++			     GFP_KERNEL);
++	if (!input_fmts)
++		return NULL;
++
++	*num_input_fmts = 1;
++	input_fmts[0] = oldi_bus_formats[i].input_bus_fmt;
++	oldi->bus_format = &oldi_bus_formats[i];
++
++	return input_fmts;
++}
++
++static enum drm_mode_status
++tidss_oldi_mode_valid(struct drm_bridge *bridge,
++		      const struct drm_display_info *info,
++		      const struct drm_display_mode *mode)
++{
++	struct tidss_oldi *oldi = drm_bridge_to_tidss_oldi(bridge);
++	unsigned long round_clock;
++
++	round_clock = clk_round_rate(oldi->serial, mode->clock * 7 * 1000);
++	/*
++	 * To keep the check consistent with dispc_vp_set_clk_rate(),
++	 * we use the same 5% check here.
++	 */
++	if (dispc_pclk_diff(mode->clock * 7 * 1000, round_clock) > 5)
++		return -EINVAL;
++
++	return 0;
++}
++
++static const struct drm_bridge_funcs tidss_oldi_bridge_funcs = {
++	.attach	= tidss_oldi_bridge_attach,
++	.atomic_pre_enable = tidss_oldi_atomic_pre_enable,
++	.atomic_post_disable = tidss_oldi_atomic_post_disable,
++	.atomic_get_input_bus_fmts = tidss_oldi_atomic_get_input_bus_fmts,
++	.atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
++	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
++	.atomic_reset = drm_atomic_helper_bridge_reset,
++	.mode_valid = tidss_oldi_mode_valid,
++};
++
++static int get_oldi_mode(struct device_node *oldi_tx, int *companion_instance)
++{
++	struct device_node *companion;
++	struct device_node *port0, *port1;
++	u32 companion_reg;
++	bool secondary_oldi = false;
++	int pixel_order;
++
++	/*
++	 * Find if the OLDI is paired with another OLDI for combined OLDI
++	 * operation (dual-link or clone).
++	 */
++	companion = of_parse_phandle(oldi_tx, "ti,companion-oldi", 0);
++	if (!companion)
++		/*
++		 * The OLDI TX does not have a companion, nor is it a
++		 * secondary OLDI. It will operate independently.
++		 */
++		return OLDI_MODE_SINGLE_LINK;
++
++	if (of_property_read_u32(companion, "reg", &companion_reg))
++		return OLDI_MODE_UNSUPPORTED;
++
++	if (companion_reg > (TIDSS_MAX_OLDI_TXES - 1))
++		/* Invalid companion OLDI reg value. */
++		return OLDI_MODE_UNSUPPORTED;
++
++	*companion_instance = (int)companion_reg;
++
++	if (of_property_read_bool(oldi_tx, "ti,secondary-oldi"))
++		secondary_oldi = true;
++
++	/*
++	 * We need to work out if the sink is expecting us to function in
++	 * dual-link mode. We do this by looking at the DT port nodes, the
++	 * OLDI TX ports are connected to. If they are marked as expecting
++	 * even pixels and odd pixels, then we need to enable dual-link.
++	 */
++	port0 = of_graph_get_port_by_id(oldi_tx, 1);
++	port1 = of_graph_get_port_by_id(companion, 1);
++	pixel_order = drm_of_lvds_get_dual_link_pixel_order(port0, port1);
++	of_node_put(port0);
++	of_node_put(port1);
++	of_node_put(companion);
++
++	switch (pixel_order) {
++	case -EINVAL:
++		/*
++		 * The dual-link properties were not found in at least
++		 * one of the sink nodes. Since 2 OLDI ports are present
++		 * in the DT, it can be safely assumed that the required
++		 * configuration is Clone Mode.
++		 */
++		return (secondary_oldi ? OLDI_MODE_SECONDARY_CLONE_SINGLE_LINK :
++					 OLDI_MODE_CLONE_SINGLE_LINK);
++
++	case DRM_LVDS_DUAL_LINK_ODD_EVEN_PIXELS:
++		/*
++		 * Primary OLDI can only support "ODD" pixels. So, from its
++		 * perspective, the pixel order has to be ODD-EVEN.
++		 */
++		return (secondary_oldi ? OLDI_MODE_UNSUPPORTED :
++					 OLDI_MODE_DUAL_LINK);
++
++	case DRM_LVDS_DUAL_LINK_EVEN_ODD_PIXELS:
++		/*
++		 * Secondary OLDI can only support "EVEN" pixels. So, from its
++		 * perspective, the pixel order has to be EVEN-ODD.
++		 */
++		return (secondary_oldi ? OLDI_MODE_SECONDARY_DUAL_LINK :
++					 OLDI_MODE_UNSUPPORTED);
++
++	default:
++		return OLDI_MODE_UNSUPPORTED;
++	}
++}
++
++static int get_parent_dss_vp(struct device_node *oldi_tx, u32 *parent_vp)
++{
++	struct device_node *ep, *dss_port;
++	int ret;
++
++	ep = of_graph_get_endpoint_by_regs(oldi_tx, OLDI_INPUT_PORT, -1);
++	if (ep) {
++		dss_port = of_graph_get_remote_port(ep);
++		if (!dss_port) {
++			ret = -ENODEV;
++			goto err_return_ep_port;
++		}
++
++		ret = of_property_read_u32(dss_port, "reg", parent_vp);
++
++		of_node_put(dss_port);
++err_return_ep_port:
++		of_node_put(ep);
++		return ret;
++	}
++
++	return -ENODEV;
++}
++
++static const struct drm_bridge_timings default_tidss_oldi_timings = {
++	.input_bus_flags = DRM_BUS_FLAG_SYNC_SAMPLE_NEGEDGE
++			 | DRM_BUS_FLAG_DE_HIGH,
++};
++
++void tidss_oldi_deinit(struct tidss_device *tidss)
++{
++	for (int i = 0; i < tidss->num_oldis; i++) {
++		if (tidss->oldis[i]) {
++			drm_bridge_remove(&tidss->oldis[i]->bridge);
++			tidss->is_ext_vp_clk[tidss->oldis[i]->parent_vp] = false;
++			tidss->oldis[i] = NULL;
++		}
++	}
++}
++
++int tidss_oldi_init(struct tidss_device *tidss)
++{
++	struct tidss_oldi *oldi;
++	struct device_node *child;
++	struct drm_bridge *bridge;
++	u32 parent_vp, oldi_instance;
++	int companion_instance = -1;
++	enum tidss_oldi_link_type link_type = OLDI_MODE_UNSUPPORTED;
++	struct device_node *oldi_parent;
++	int ret = 0;
++
++	tidss->num_oldis = 0;
++
++	oldi_parent = of_get_child_by_name(tidss->dev->of_node, "oldi-transmitters");
++	if (!oldi_parent)
++		/* Return gracefully */
++		return 0;
++
++	for_each_available_child_of_node(oldi_parent, child) {
++		ret = get_parent_dss_vp(child, &parent_vp);
++		if (ret) {
++			if (ret == -ENODEV) {
++				/*
++				 * ENODEV means that this particular OLDI node
++				 * is not connected with the DSS, which is not
++				 * a harmful case. There could be another OLDI
++				 * which may still be connected.
++				 * Continue to search for that.
++				 */
++				continue;
++			}
++			goto err_put_node;
++		}
++
++		ret = of_property_read_u32(child, "reg", &oldi_instance);
++		if (ret)
++			goto err_put_node;
++
++		/*
++		 * Now that it's confirmed that OLDI is connected with DSS,
++		 * let's continue getting the OLDI sinks ahead and other OLDI
++		 * properties.
++		 */
++		bridge = devm_drm_of_get_bridge(tidss->dev, child,
++						OLDI_OUTPUT_PORT, 0);
++		if (IS_ERR(bridge)) {
++			/*
++			 * Either there was no OLDI sink in the devicetree, or
++			 * the OLDI sink has not been added yet. In any case,
++			 * return.
++			 * We don't want to have an OLDI node connected to DSS
++			 * but not to any sink.
++			 */
++			ret = dev_err_probe(tidss->dev, PTR_ERR(bridge),
++					    "no panel/bridge for OLDI%u.\n",
++					    oldi_instance);
++			goto err_put_node;
++		}
++
++		link_type = get_oldi_mode(child, &companion_instance);
++		if (link_type == OLDI_MODE_UNSUPPORTED) {
++			ret = dev_err_probe(tidss->dev, -EINVAL,
++					    "OLDI%u: Unsupported OLDI connection.\n",
++					    oldi_instance);
++			goto err_put_node;
++		} else if ((link_type == OLDI_MODE_SECONDARY_CLONE_SINGLE_LINK) ||
++			   (link_type == OLDI_MODE_CLONE_SINGLE_LINK)) {
++			/*
++			 * The OLDI driver cannot support OLDI clone mode
++			 * properly at present.
++			 * The clone mode requires 2 working encoder-bridge
++			 * pipelines, generating from the same crtc. The DRM
++			 * framework does not support this at present. If
++			 * there were to be, say, 2 OLDI sink bridges each
++			 * connected to an OLDI TXes, they couldn't both be
++			 * supported simultaneously.
++			 * This driver still has some code pertaining to OLDI
++			 * clone mode configuration in DSS hardware for future,
++			 * when there is a better infrastructure in the DRM
++			 * framework to support 2 encoder-bridge pipelines
++			 * simultaneously.
++			 * Till that time, this driver shall error out if it
++			 * detects a clone mode configuration.
++			 */
++			ret = dev_err_probe(tidss->dev, -EOPNOTSUPP,
++					    "The OLDI driver does not support Clone Mode at present.\n");
++			goto err_put_node;
++		} else if (link_type == OLDI_MODE_SECONDARY_DUAL_LINK) {
++			/*
++			 * This is the secondary OLDI node, which serves as a
++			 * companion to the primary OLDI, when it is configured
++			 * for the dual-link mode. Since the primary OLDI will
++			 * be a part of bridge chain, no need to put this one
++			 * too. Continue onto the next OLDI node.
++			 */
++			continue;
++		}
++
++		oldi = devm_drm_bridge_alloc(tidss->dev, struct tidss_oldi, bridge,
++					     &tidss_oldi_bridge_funcs);
++		if (IS_ERR(oldi)) {
++			ret = PTR_ERR(oldi);
++			goto err_put_node;
++		}
++
++		oldi->parent_vp = parent_vp;
++		oldi->oldi_instance = oldi_instance;
++		oldi->companion_instance = companion_instance;
++		oldi->link_type = link_type;
++		oldi->dev = tidss->dev;
++		oldi->next_bridge = bridge;
++
++		/*
++		 * Only the primary OLDI needs to reference the io-ctrl system
++		 * registers, and the serial clock.
++		 * We don't require a check for secondary OLDI in dual-link mode
++		 * because the driver will not create a drm_bridge instance.
++		 * But the driver will need to create a drm_bridge instance,
++		 * for secondary OLDI in clone mode (once it is supported).
++		 */
++		if (link_type != OLDI_MODE_SECONDARY_CLONE_SINGLE_LINK) {
++			oldi->io_ctrl = syscon_regmap_lookup_by_phandle(child,
++									"ti,oldi-io-ctrl");
++			if (IS_ERR(oldi->io_ctrl)) {
++				ret = dev_err_probe(oldi->dev, PTR_ERR(oldi->io_ctrl),
++						    "OLDI%u: syscon_regmap_lookup_by_phandle failed.\n",
++						    oldi_instance);
++				goto err_put_node;
++			}
++
++			oldi->serial = of_clk_get_by_name(child, "serial");
++			if (IS_ERR(oldi->serial)) {
++				ret = dev_err_probe(oldi->dev, PTR_ERR(oldi->serial),
++						    "OLDI%u: Failed to get serial clock.\n",
++						    oldi_instance);
++				goto err_put_node;
++			}
++		}
++
++		/* Register the bridge. */
++		oldi->bridge.of_node = child;
++		oldi->bridge.driver_private = oldi;
++		oldi->bridge.timings = &default_tidss_oldi_timings;
++
++		tidss->oldis[tidss->num_oldis++] = oldi;
++		tidss->is_ext_vp_clk[oldi->parent_vp] = true;
++		oldi->tidss = tidss;
++
++		drm_bridge_add(&oldi->bridge);
++	}
++
++	of_node_put(child);
++	of_node_put(oldi_parent);
++
++	return 0;
++
++err_put_node:
++	of_node_put(child);
++	of_node_put(oldi_parent);
++	return ret;
++}
+diff --git a/drivers/gpu/drm/tidss/tidss_oldi.h b/drivers/gpu/drm/tidss/tidss_oldi.h
+new file mode 100644
+index 000000000..8cd535c5e
+--- /dev/null
++++ b/drivers/gpu/drm/tidss/tidss_oldi.h
+@@ -0,0 +1,43 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Copyright (C) 2025 - Texas Instruments Incorporated
++ *
++ * Aradhya Bhatia <a-bhatia1@ti.com>
++ */
++
++#ifndef __TIDSS_OLDI_H__
++#define __TIDSS_OLDI_H__
++
++#include "tidss_drv.h"
++
++struct tidss_oldi;
++
++/* OLDI PORTS */
++#define OLDI_INPUT_PORT		0
++#define OLDI_OUTPUT_PORT	1
++
++/* Control MMR Registers */
++
++/* Register offsets */
++#define OLDI_PD_CTRL            0x100
++#define OLDI_LB_CTRL            0x104
++
++/* Power control bits */
++#define OLDI_PWRDOWN_TX(n)	BIT(n)
++
++/* LVDS Bandgap reference Enable/Disable */
++#define OLDI_PWRDN_BG		BIT(8)
++
++enum tidss_oldi_link_type {
++	OLDI_MODE_UNSUPPORTED,
++	OLDI_MODE_SINGLE_LINK,
++	OLDI_MODE_CLONE_SINGLE_LINK,
++	OLDI_MODE_SECONDARY_CLONE_SINGLE_LINK,
++	OLDI_MODE_DUAL_LINK,
++	OLDI_MODE_SECONDARY_DUAL_LINK,
++};
++
++int tidss_oldi_init(struct tidss_device *tidss);
++void tidss_oldi_deinit(struct tidss_device *tidss);
++
++#endif /* __TIDSS_OLDI_H__ */
+diff --git a/drivers/gpu/drm/tidss/tidss_plane.c b/drivers/gpu/drm/tidss/tidss_plane.c
+index a5d86822c..142ae8195 100644
+--- a/drivers/gpu/drm/tidss/tidss_plane.c
++++ b/drivers/gpu/drm/tidss/tidss_plane.c
+@@ -18,6 +18,14 @@
+ #include "tidss_drv.h"
+ #include "tidss_plane.h"
+ 
++void tidss_plane_error_irq(struct drm_plane *plane, u64 irqstatus)
++{
++	struct tidss_plane *tplane = to_tidss_plane(plane);
++
++	dev_err_ratelimited(plane->dev->dev, "Plane%u underflow (irq %llx)\n",
++			    tplane->hw_plane_id, irqstatus);
++}
++
+ /* drm_plane_helper_funcs */
+ 
+ static int tidss_plane_atomic_check(struct drm_plane *plane,
+@@ -59,7 +67,7 @@ static int tidss_plane_atomic_check(struct drm_plane *plane,
+ 
+ 	/*
+ 	 * The HW is only able to start drawing at subpixel boundary
+-	 * (the two first checks bellow). At the end of a row the HW
++	 * (the two first checks below). At the end of a row the HW
+ 	 * can only jump integer number of subpixels forward to the
+ 	 * beginning of the next row. So we can only show picture with
+ 	 * integer subpixel width (the third check). However, after
+@@ -192,7 +200,7 @@ struct tidss_plane *tidss_plane_create(struct tidss_device *tidss,
+ 	struct tidss_plane *tplane;
+ 	enum drm_plane_type type;
+ 	u32 possible_crtcs;
+-	u32 num_planes = tidss->feat->num_planes;
++	u32 num_planes = tidss->feat->num_vids;
+ 	u32 color_encodings = (BIT(DRM_COLOR_YCBCR_BT601) |
+ 			       BIT(DRM_COLOR_YCBCR_BT709));
+ 	u32 color_ranges = (BIT(DRM_COLOR_YCBCR_FULL_RANGE) |
+diff --git a/drivers/gpu/drm/tidss/tidss_plane.h b/drivers/gpu/drm/tidss/tidss_plane.h
+index e933e158b..92c560c3a 100644
+--- a/drivers/gpu/drm/tidss/tidss_plane.h
++++ b/drivers/gpu/drm/tidss/tidss_plane.h
+@@ -7,6 +7,8 @@
+ #ifndef __TIDSS_PLANE_H__
+ #define __TIDSS_PLANE_H__
+ 
++#include <drm/drm_plane.h>
++
+ #define to_tidss_plane(p) container_of((p), struct tidss_plane, plane)
+ 
+ struct tidss_device;
+@@ -22,4 +24,6 @@ struct tidss_plane *tidss_plane_create(struct tidss_device *tidss,
+ 				       u32 crtc_mask, const u32 *formats,
+ 				       u32 num_formats);
+ 
++void tidss_plane_error_irq(struct drm_plane *plane, u64 irqstatus);
++
+ #endif
+diff --git a/drivers/gpu/drm/tidss/tidss_scale_coefs.h b/drivers/gpu/drm/tidss/tidss_scale_coefs.h
+index 9c560d0fd..9824d02d9 100644
+--- a/drivers/gpu/drm/tidss/tidss_scale_coefs.h
++++ b/drivers/gpu/drm/tidss/tidss_scale_coefs.h
+@@ -9,6 +9,8 @@
+ 
+ #include <linux/types.h>
+ 
++struct device;
++
+ struct tidss_scale_coefs {
+ 	s16 c2[16];
+ 	s16 c1[16];
+-- 
+2.34.1
+

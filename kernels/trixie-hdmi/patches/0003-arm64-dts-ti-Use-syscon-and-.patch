@@ -1,0 +1,97 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tomi Valkeinen <tomi.valkeinen@ideasonboard.com>
+Date: Thu, 28 May 2026 15:53:47 +0300
+Subject: [PATCH 03/14] arm64: dts: ti: Use syscon and simple-mfd for the main
+ conf region
+
+We already had a common binding (ti,j721e-system-controller.yaml) for
+the Control Module region for multiple TI SoCs. This was not used for
+more recent SoCs. These more recent SoCs just have a "simple-bus"
+representing the Control Module. In a few cases the
+simple-bus node also had "reg" property, which is not correct for a
+simple-bus, but we make use of it in this patch.
+
+With the adjustments done in previous commits to the dtsi files and the
+bindings, we can now use the TI system-controller bindings in am62,
+am62a, am62p-j722s and j784s4-j742s2 dtsi files. This means that the
+node for the Control Module (labeled 'main_conf' or 'scm_conf') changes
+from "simple-bus" to, e.g., "ti,am62p-system-controller", "syscon",
+"simple-mfd".
+
+While, as far as I understand, this is an ABI change, I believe this
+does not cause any breakages: the old dtbs with "simple-bus" will
+continue booting fine, with the child nodes getting instantiated, and
+the new dtbs with "simple-mfd" behave exactly the same way.
+
+With this change, we can use the Control Module as a syscon from the
+drivers. E.g. on some SoCs we have a single register in the Control
+Module related to DSS DPI output control, surrounded by registers for
+totally different subsystems. Instead of having to create a new syscon
+child node for this single register the DSS node can now just point to
+the register with 'ti,dpi-io-ctrl = <&main_conf 0x8300>'.
+
+Signed-off-by: Tomi Valkeinen <tomi.valkeinen@ideasonboard.com>
+---
+ arch/arm64/boot/dts/ti/k3-am62-main.dtsi                 | 3 ++-
+ arch/arm64/boot/dts/ti/k3-am62a-main.dtsi                | 3 ++-
+ arch/arm64/boot/dts/ti/k3-am62p-j722s-common-main.dtsi   | 2 +-
+ arch/arm64/boot/dts/ti/k3-j784s4-j742s2-main-common.dtsi | 2 +-
+ 4 files changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/ti/k3-am62-main.dtsi b/arch/arm64/boot/dts/ti/k3-am62-main.dtsi
+index a74c8b523..26c892b17 100644
+--- a/arch/arm64/boot/dts/ti/k3-am62-main.dtsi
++++ b/arch/arm64/boot/dts/ti/k3-am62-main.dtsi
+@@ -42,7 +42,8 @@ gic_its: msi-controller@1820000 {
+ 	};
+ 
+ 	main_conf: bus@100000 {
+-		compatible = "simple-bus";
++		compatible = "ti,am62-system-controller", "syscon", "simple-mfd";
++		reg = <0 0x00100000 0 0x20000>;
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+ 		ranges = <0x0 0x00 0x00100000 0x20000>;
+diff --git a/arch/arm64/boot/dts/ti/k3-am62a-main.dtsi b/arch/arm64/boot/dts/ti/k3-am62a-main.dtsi
+index c4857bfbe..a9a1953c3 100644
+--- a/arch/arm64/boot/dts/ti/k3-am62a-main.dtsi
++++ b/arch/arm64/boot/dts/ti/k3-am62a-main.dtsi
+@@ -42,7 +42,8 @@ gic_its: msi-controller@1820000 {
+ 	};
+ 
+ 	main_conf: bus@100000 {
+-		compatible = "simple-bus";
++		compatible = "ti,am62a-system-controller", "syscon", "simple-mfd";
++		reg = <0 0x00100000 0 0x20000>;
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+ 		ranges = <0x00 0x00 0x00100000 0x20000>;
+diff --git a/arch/arm64/boot/dts/ti/k3-am62p-j722s-common-main.dtsi b/arch/arm64/boot/dts/ti/k3-am62p-j722s-common-main.dtsi
+index 239acfcc3..01f1afc7c 100644
+--- a/arch/arm64/boot/dts/ti/k3-am62p-j722s-common-main.dtsi
++++ b/arch/arm64/boot/dts/ti/k3-am62p-j722s-common-main.dtsi
+@@ -40,7 +40,7 @@ gic_its: msi-controller@1820000 {
+ 	};
+ 
+ 	main_conf: bus@100000 {
+-		compatible = "simple-bus";
++		compatible = "ti,am62p-system-controller", "syscon", "simple-mfd";
+ 		reg = <0x00 0x00100000 0x00 0x20000>;
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+diff --git a/arch/arm64/boot/dts/ti/k3-j784s4-j742s2-main-common.dtsi b/arch/arm64/boot/dts/ti/k3-j784s4-j742s2-main-common.dtsi
+index d6f7319fd..bd3b2937d 100644
+--- a/arch/arm64/boot/dts/ti/k3-j784s4-j742s2-main-common.dtsi
++++ b/arch/arm64/boot/dts/ti/k3-j784s4-j742s2-main-common.dtsi
+@@ -46,7 +46,7 @@ l3cache-sram@200000 {
+ 	};
+ 
+ 	scm_conf: bus@100000 {
+-		compatible = "simple-bus";
++		compatible = "ti,j784s4-system-controller", "syscon", "simple-mfd";
+ 		reg = <0x00 0x00100000 0x00 0x1c000>;
+ 		#address-cells = <1>;
+ 		#size-cells = <1>;
+-- 
+2.34.1
+

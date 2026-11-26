@@ -8,6 +8,7 @@
 #   --kernel also changes desktop/headless, e.g. ./build.sh desktop --kernel stable-hdmi
 #     lts-hdmi  6.18 LTS + HDMI patches (desktop default)   mainline  6.18 LTS, no patches (headless default)
 #     stable-hdmi  7.3 stable + HDMI patches               stable    7.3 stable, no patches
+#     trixie-hdmi  Debian trixie 6.12 + 6.18 display/GPU + HDMI   trixie  Debian trixie 6.12 (Pardus 25's)
 #     debian  Debian 7.2.12 + HDMI patches                 t3        T3's 6.12
 #
 # Options:
@@ -46,9 +47,9 @@ while [ $# -gt 0 ]; do
   esac
 done
 case "$FLAVOR" in full|lite|minimal) ;; *) echo "--flavor must be full, lite or minimal"; exit 1 ;; esac
-case "$KERNEL" in t3|debian|mainline|lts-hdmi|stable|stable-hdmi) ;;
-  *) echo "--kernel must be lts-hdmi, mainline, stable-hdmi, stable, debian or t3"; exit 1 ;; esac
-case "$KERNEL" in mainline|stable)
+case "$KERNEL" in t3|debian|mainline|lts-hdmi|stable|stable-hdmi|trixie|trixie-hdmi) ;;
+  *) echo "--kernel must be lts-hdmi, mainline, stable-hdmi, stable, trixie-hdmi, trixie, debian or t3"; exit 1 ;; esac
+case "$KERNEL" in mainline|stable|trixie)
   if [ "$FLAVOR" != minimal ]; then echo "note: the $KERNEL kernel has no HDMI; the desktop will not show on a screen"; fi ;;
 esac
 step(){ echo; echo "=== $*"; }

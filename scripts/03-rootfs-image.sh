@@ -7,7 +7,7 @@
 # Options (command line > environment variable > marker file in the repo folder > default):
 #   --distro  pardus | debian               DISTRO           (default debian; ./go-pardus = pardus)
 #   --flavor  full | lite | minimal         FLAVOR   .flavor (default lite; old marker .lite = lite)
-#   --kernel  lts-hdmi | mainline | stable-hdmi | stable | debian | t3 | ti   KERNEL .kernel (default lts-hdmi)
+#   --kernel  lts-hdmi | mainline | stable-hdmi | stable | trixie-hdmi | trixie | debian | t3 | ti   KERNEL .kernel (default lts-hdmi)
 #   --vendor-bl / --vendor-initrd           VENDOR_BL / VENDOR_INITRD  .vendor-bl / .vendor-initrd
 #   --xz N    xz level of the .img.xz       XZ_LEVEL         (default 3 = fast; 6 for releases)
 # sudo drops environment variables: use the command line options (or marker files).
@@ -91,12 +91,13 @@ case "$VENDOR_BL$VENDOR_INITRD" in 00) SUFFIX=-own ;; 11) SUFFIX=-vboot ;; 10) S
 #   mainline = kernel.org 6.18 LTS, no patches, no HDMI       -> kernels/mainline/out/...
 #   lts-hdmi = kernel.org 6.18 LTS + HDMI patches              -> kernels/lts-hdmi/out/...
 #   stable / stable-hdmi = kernel.org 7.3 stable (+ HDMI)     -> kernels/stable*/out/...
+#   trixie / trixie-hdmi = Debian trixie 6.12 (+ HDMI/GPU)    -> kernels/trixie*/out/...
 #   ti       = TI's kernel source (not prepared yet)          -> kernels/ti/out/...
 KERNEL=${KERNEL:-$(cat "$TOP/.kernel" 2>/dev/null || echo lts-hdmi)}
 case "$KERNEL" in
   t3)        KDIR=$OUT/kernel; KBOOT=$OUT/boot ;;
-  debian|ti|mainline|lts-hdmi|stable|stable-hdmi) KDIR=$TOP/kernels/$KERNEL/out; KBOOT=$KDIR ;;
-  *) echo "KERNEL must be lts-hdmi, mainline, stable-hdmi, stable, debian, t3 or ti"; exit 1 ;;
+  debian|ti|mainline|lts-hdmi|stable|stable-hdmi|trixie|trixie-hdmi) KDIR=$TOP/kernels/$KERNEL/out; KBOOT=$KDIR ;;
+  *) echo "KERNEL must be lts-hdmi, mainline, stable-hdmi, stable, trixie-hdmi, trixie, debian, t3 or ti"; exit 1 ;;
 esac
 [ "$KERNEL" = t3 ] || SUFFIX=$SUFFIX-k$KERNEL
 # exactly one kernel package: the newest one (older builds may still lie next to it)
@@ -133,7 +134,7 @@ for t in debootstrap:debootstrap qemu-aarch64-static:qemu-user-static mkfs.btrfs
 done
 if [ ${#need[@]} -gt 0 ]; then log "installing host tools: ${need[*]}"; apt-get install -y "${need[@]}"; fi
 
-# The host distro's debian-archive-keyring may be too old for trixie signing keys:
+# The build host's debian-archive-keyring may be older and lack trixie signing keys:
 # fetch the current keyring package from Debian and use it only for debootstrap.
 fetch_keyring(){  # $1 = pool dir URL, $2 = package name, $3 = output .gpg
   [ -s "$3" ] && return 0

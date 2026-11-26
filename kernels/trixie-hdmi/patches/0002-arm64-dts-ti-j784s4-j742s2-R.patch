@@ -1,0 +1,57 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Tomi Valkeinen <tomi.valkeinen@ideasonboard.com>
+Date: Thu, 28 May 2026 15:53:42 +0300
+Subject: [PATCH 02/14] arm64: dts: ti: j784s4/j742s2: Rename pcieN-ctrl nodes
+ to pcie-ctrl
+
+For some reason the pcie control node names were numbered
+(e.g. 'pcie1-ctrl'). Fix the names to 'pcie-ctrl' so that we can, in a
+later patch, more easily use a common system controller binding.
+
+Signed-off-by: Tomi Valkeinen <tomi.valkeinen@ideasonboard.com>
+---
+ arch/arm64/boot/dts/ti/k3-j784s4-j742s2-main-common.dtsi | 4 ++--
+ arch/arm64/boot/dts/ti/k3-j784s4-main.dtsi               | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/arch/arm64/boot/dts/ti/k3-j784s4-j742s2-main-common.dtsi b/arch/arm64/boot/dts/ti/k3-j784s4-j742s2-main-common.dtsi
+index 079ccefea..d6f7319fd 100644
+--- a/arch/arm64/boot/dts/ti/k3-j784s4-j742s2-main-common.dtsi
++++ b/arch/arm64/boot/dts/ti/k3-j784s4-j742s2-main-common.dtsi
+@@ -65,12 +65,12 @@ cpsw0_phy_gmii_sel: phy@4044 {
+ 			ti,qsgmii-main-ports = <7>, <7>;
+ 		};
+ 
+-		pcie0_ctrl: pcie0-ctrl@4070 {
++		pcie0_ctrl: pcie-ctrl@4070 {
+ 			compatible = "ti,j784s4-pcie-ctrl", "syscon";
+ 			reg = <0x4070 0x4>;
+ 		};
+ 
+-		pcie1_ctrl: pcie1-ctrl@4074 {
++		pcie1_ctrl: pcie-ctrl@4074 {
+ 			compatible = "ti,j784s4-pcie-ctrl", "syscon";
+ 			reg = <0x4074 0x4>;
+ 		};
+diff --git a/arch/arm64/boot/dts/ti/k3-j784s4-main.dtsi b/arch/arm64/boot/dts/ti/k3-j784s4-main.dtsi
+index 78fcd0c40..336bb9b99 100644
+--- a/arch/arm64/boot/dts/ti/k3-j784s4-main.dtsi
++++ b/arch/arm64/boot/dts/ti/k3-j784s4-main.dtsi
+@@ -152,12 +152,12 @@ c71_3: dsp@67800000 {
+ };
+ 
+ &scm_conf {
+-	pcie2_ctrl: pcie2-ctrl@4078 {
++	pcie2_ctrl: pcie-ctrl@4078 {
+ 		compatible = "ti,j784s4-pcie-ctrl", "syscon";
+ 		reg = <0x4078 0x4>;
+ 	};
+ 
+-	pcie3_ctrl: pcie3-ctrl@407c {
++	pcie3_ctrl: pcie-ctrl@407c {
+ 		compatible = "ti,j784s4-pcie-ctrl", "syscon";
+ 		reg = <0x407c 0x4>;
+ 	};
+-- 
+2.34.1
+
