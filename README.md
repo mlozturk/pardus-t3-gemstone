@@ -12,7 +12,8 @@ an ISO; it is a `.img.xz` written straight to the SD card.
 - One-command build:  
   `./build.sh desktop` *(desktop)* or `./build.sh headless` *(headless)*.
 - Kernel, selected with `--kernel`:  
-  T3 6.12, Debian 7.2.12, kernel.org 6.18 LTS (patched/unpatched) and kernel.org 7.3.5 (patched/unpatched).  
+  T3 6.12, Debian 7.2.12, kernel.org 6.18 LTS (patched/unpatched), kernel.org 7.3.5
+  (patched/unpatched) and Debian trixie 6.12 (patched/unpatched).
   All of them share the same board definition (`board/dts/`) and the same Pardus userspace; only the kernel source and the patch set change.
 
 - System size, selected with `--flavor`:  
@@ -127,6 +128,8 @@ up the board's display subsystem (DSS); see
 | `mainline` | kernel.org 6.18 LTS (6.18.64), unpatched | no | **Headless, long-term.** Recommended headless configuration; smallest image |
 | `stable-hdmi` | kernel.org 7.3.5 + 21 HDMI patches backported to 7.3 | yes | Trying a newer kernel on the desktop. Not LTS; ends when 7.4 ships |
 | `stable` | kernel.org 7.3.5, unpatched | no | Trying a newer kernel headless. Not LTS |
+| `trixie-hdmi` | Debian trixie `linux 6.12.118-1` (the kernel Pardus 25 uses) + display/GPU drivers from 6.18 + HDMI/DTS patches (14 patches) | yes | Desktop with Pardus 25's own kernel |
+| `trixie` | Debian trixie `linux 6.12.118-1`, Debian config + board drivers | no | Headless with Pardus 25's own kernel |
 | `debian` | Debian `linux 7.2.12-1~bpo13+1` + HDMI patches + GPU/VPU nodes from 7.4 (24 patches total) | yes | For staying on Debian's kernel package base; the previous desktop kernel |
 | `t3` | Board vendor T3's 6.12 kernel ([v6.12.24-ti-arm64](https://github.com/t3gemstone/linux/tree/v6.12.24-ti-arm64-r43-t3-gem-o1)) | yes | Comparison with / when you need the vendor kernel's behaviour |
 
@@ -142,6 +145,10 @@ Build command for each configuration:
 # Newer kernel (7.3.5, not LTS)
 ./build.sh desktop  --kernel stable-hdmi
 ./build.sh headless --kernel stable
+
+# Pardus 25's own Debian trixie 6.12 kernel
+./build.sh desktop  --kernel trixie-hdmi
+./build.sh headless --kernel trixie
 
 # Debian 7.2.12-based desktop kernel
 ./build.sh desktop  --kernel debian
@@ -224,7 +231,7 @@ computer with balenaEtcher or Raspberry Pi Imager.
 3. To connect over the network, set your computer's Ethernet address to `10.42.0.11/24`:
    `ssh pardus@10.42.0.12`.
 
-On first boot the system expands itself to the whole SD card.
+On first boot the root partition expands to the rest of the SD card.
 
 ## Updating the kernel
 

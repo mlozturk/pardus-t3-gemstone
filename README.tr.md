@@ -11,8 +11,8 @@ kök dosya sistemi tek komutla derlenir. Çıktı bir ISO değil; SD karta yazı
 - Tek komutla derleme:  
     `./build.sh desktop` _(masaüstü)_ veya `./build.sh headless` _(ekransız)_.
 - Çekirdek yapılandırması `--kernel` ile seçilebilir:  
-     T3 6.12, Debian 7.2.12, kernel.org
-  6.18 LTS (yamalı/yamasız) ve kernel.org 7.3.5 (yamalı/yamasız).  
+     T3 6.12, Debian 7.2.12, kernel.org 6.18 LTS (yamalı/yamasız), kernel.org 7.3.5
+  (yamalı/yamasız) ve Debian trixie 6.12 (yamalı/yamasız).
    Hepsi aynı kart tanımını
   (`board/dts/`) ve aynı Pardus kullanıcı alanını paylaşır; yalnız çekirdek kaynağı ve yama kümesi
   değişir.
@@ -129,6 +129,8 @@ görüntü birimini (DSS) çalışır hale getirir; ayrıntı için aşağıdaki
 | `mainline` | kernel.org 6.18 LTS (6.18.64), yamasız | yok | **Ekransız, uzun destek.** Önerilen ekransız yapılandırması; en küçük imaj |
 | `stable-hdmi` | kernel.org 7.3.5 + 7.3'e taşınmış 21 HDMI yaması | var | Masaüstünde daha yeni çekirdek denemek. LTS değil; 7.4 çıkınca kapanır |
 | `stable` | kernel.org 7.3.5, yamasız | yok | Ekransızda daha yeni çekirdek denemek. LTS değil |
+| `trixie-hdmi` | Debian trixie `linux 6.12.118-1` (Pardus 25'in kullandığı çekirdek) + 6.18'den ekran/GPU sürücüleri + HDMI/DTS yamaları (14 yama) | var | Pardus 25'in kendi çekirdeğiyle masaüstü |
+| `trixie` | Debian trixie `linux 6.12.118-1`, Debian ayarı + kart sürücüleri | yok | Pardus 25'in kendi çekirdeğiyle ekransız |
 | `debian` | Debian `linux 7.2.12-1~bpo13+1` + HDMI yamaları + 7.4'ten GPU/VPU tanımı (toplam 24 yama) | var | Debian'ın çekirdek paketi tabanında kalmak isteyenler için; önceki masaüstü çekirdeği |
 | `t3` | Kart üreticisi T3'ün 6.12 çekirdeği ([v6.12.24-ti-arm64](https://github.com/t3gemstone/linux/tree/v6.12.24-ti-arm64-r43-t3-gem-o1)) | var | Üretici çekirdeğiyle karşılaştırma / vendor davranışına ihtiyaç duyulduğunda |
 
@@ -144,6 +146,10 @@ Her yapılandırmayı derleme komutu:
 # Daha yeni çekirdek (7.3.5, LTS değil)
 ./build.sh desktop  --kernel stable-hdmi
 ./build.sh headless --kernel stable
+
+# Pardus 25'in kendi Debian trixie 6.12 çekirdeği
+./build.sh desktop  --kernel trixie-hdmi
+./build.sh headless --kernel trixie
 
 # Debian 7.2.12 tabanlı masaüstü çekirdeği
 ./build.sh desktop  --kernel debian
@@ -226,7 +232,7 @@ de yazılabilir.
 3. Ağdan bağlanmak için bilgisayarın Ethernet adresini `10.42.0.11/24` yapın:  
    `ssh pardus@10.42.0.12`.
 
-İlk açılışta sistem kendini SD kartın tamamına genişletir.
+İlk açılışta kök bölüm SD kartın kalanına genişler.
 
 ## Çekirdeği güncelleme
 

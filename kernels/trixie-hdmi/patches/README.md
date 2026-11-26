@@ -4,21 +4,24 @@
 (`linux 6.12.118-1`, Debian'ın kendi yamaları uygulanmış; `versions.env` → `TRIXIE_KERNEL_*`)
 `git am` ile uygular (24 Kasım 2026).
 
-6.12'de kartın ekran birimi (AM62P/J722S DSS) ve GPU'su (PowerVR BXS-4-64) için sürücü desteği
-yok. Bu yüzden önce iki sürücü 6.18'den alınıyor, HDMI serisi onların üstüne uygulanıyor, en son
-6.12'nin çekirdek arayüzlerine uyarlanıyor:
+6.12'de AM62P/J722S DSS ve PowerVR BXS-4-64 için sürücü desteği yok. Bu yüzden önce iki sürücü
+6.18'den alınıyor, HDMI serisi onların üstüne uygulanıyor, en son 6.12'nin çekirdek arayüzlerine
+uyarlanıyor:
 
 | Yama | Ne | Kaynak |
 |---|---|---|
 | 0001 | `drivers/gpu/drm/tidss` (ekran) ve `drivers/gpu/drm/imagination` (GPU) sürücüleri ile `include/uapi/drm/pvr_drm.h`, kernel.org **v6.18.64**'ten değiştirilmeden | kernel.org |
-| 0002–0013 | HDMI serisi: `kernels/lts-hdmi/patches/`'in bu karta dokunan 12 yaması (0001, 0005, 0009, 0011–0018, 0020), olduğu gibi | Tomi Valkeinen'in serisi |
+| 0002–0013 | 6.18 serisinden alınan 12 yama: HDMI yamaları ve bu karta gereken DTS/binding bağımlılıkları (`lts-hdmi` 0001, 0005, 0009, 0011–0018, 0020), olduğu gibi | Tomi Valkeinen'in serisi |
 | 0014 | 6.12 uyarlaması (aşağıda) | bizim |
 
 **Atlanan 8 yama** (`lts-hdmi` 0002–0004, 0006–0008, 0010, 0019): yalnız başka kartların (AM62,
-BeagleY-AI) tarif dosyalarını ya da belgeleri (`Documentation/devicetree/bindings`) değiştiriyorlar;
-6.12'de o dosyalar farklı olduğu için uymuyorlar. Bu kartın DTB'sini ve sürücüleri etkilemezler.
+BeagleY-AI) DTS dosyalarını veya DT binding şemalarını (`Documentation/devicetree/bindings`)
+değiştiriyorlar; 6.12'de o dosyalar farklı olduğu için uymuyorlar. Bu kartın DTB'sini ve sürücüleri
+etkilemezler.
 
-**0014, 6.12 uyarlaması** (`git show` ile tamamı görülür; 9 dosya, ~70 satır):
+Kart tanımı (DTS) bu yama setinde değil; `board/dts/` altından derlenir.
+
+**0014, 6.12 uyarlaması** (`git show` ile tamamı görülür; 9 dosya, 71 ekleme / 49 silme):
 
 | Yer | 6.18'de | 6.12'de kullanılan |
 |---|---|---|
@@ -35,8 +38,8 @@ BeagleY-AI) tarif dosyalarını ya da belgeleri (`Documentation/devicetree/bindi
 
 **Durum:** Sürücüler 6.18'de denenmiş haliyle geliyor; uyarlama hatasız derleniyor ve bağlanıyor.
 Masaüstü imajı kartta açıldı, ilk denemede sorunsuz (25 Kasım 2026). GPU (Vulkan) ve HDMI sesi
-ayrıca ölçülmedi. Kipte OLDI ekran
-kullanan kartlar için sıra değişikliği uygun değildir; bu kartta OLDI yok.
+ayrıca ölçülmedi. Bu sıra değişikliği OLDI ekran kullanan kartlar için uygun değildir; bu kartta
+OLDI yok.
 
 **Yeniden üretmek:** hazırlanmış ağaç `kernels/trixie-hdmi/src` bir git deposudur
 (`git log debian-6.12.118-1..HEAD`). Değişiklik orada commit'lenir, sonra:

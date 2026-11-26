@@ -2,9 +2,9 @@
 
 `kernels/lts-hdmi/build.sh` bu klasördeki 20 yamayı kernel.org'un **6.18 LTS** kaynağına
 (`versions.env` → `MAINLINE_VERSION`) `git am` ile uygular. Yamalar, Debian 7.2.12 çekirdeğinde
-kullandığımız HDMI serisinin (Tomi Valkeinen, `kernels/debian/patches/0001–0022`) 6.18'e taşınmış
-halidir. Hiçbiri bizim yazdığımız yeni kod değil; uyarlananlarda yalnızca kodun
-6.18'deki yeri değişti.
+kullandığımız HDMI serisinin (Tomi Valkeinen, `kernels/debian/patches/0001–0022`) 22 Kasım
+2026'da 6.18'e taşınmış halidir. Hiçbiri bizim yazdığımız yeni kod değil; uyarlananlarda yalnızca
+kodun 6.18'deki yeri değişti.
 
 | Burada | Debian serisinde | Durum |
 |---|---|---|
@@ -22,8 +22,8 @@ halidir. Hiçbiri bizim yazdığımız yeni kod değil; uyarlananlarda yalnızca
 | 0020 | 0022 | **uyarlandı:** OLDI `atomic_check` işlevi; 6.18'de `pre_enable` imzası `drm_atomic_state` kullanıyor, işlev onun önüne eklendi |
 
 Ayrıntılı karşılaştırma (her uyarlamanın 7.2'deki ve 6.18'deki yeri, ses düzeltmeleri, ayar farkı):
-`docs/HDMI-YAMALARI.md`. 0015 ve 0020'deki gereksiz `tidss_oldi.c.rej` dosyası
-çıkarıldı; seri temiz 6.18.64'e uygulanınca derlenen ağacın aynısını veriyor.
+`docs/HDMI-YAMALARI.md`. 22 Kasım 2026'da 0015 ve 0020'deki gereksiz `tidss_oldi.c.rej`
+dosyası çıkarıldı; seri temiz 6.18.64'e uygulanınca derlenen ağacın aynısını veriyor.
 
 GPU ve VPU-SRAM düğümleri yama değil: kart tarifi `board/dts/k3-am67a-t3-gem-o1-lts-hdmi.dts`
 bunları `k3-am67a-t3-gem-o1-gpu-v7.4.dtsi`'den alır (Debian serisindeki 0023–0024'ün karşılığı).

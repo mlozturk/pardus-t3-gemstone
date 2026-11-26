@@ -114,8 +114,8 @@ log(){ echo "### $*"; }
 
 # apt/sqv reject signatures "from the future" if the build host clock is behind.
 # Compare with the mirror's HTTP Date header and correct the clock if it is off by > 5 min.
-# This changes the HOST clock from an unauthenticated HTTP header: meant for a throw-away build VM
-# whose clock drifts. On a real machine use NTP and run with FIX_CLOCK=0.
+# This changes the HOST clock from an unauthenticated HTTP header: meant for a throw-away build
+# machine whose clock drifts. On a real machine use NTP and run with FIX_CLOCK=0.
 srv=
 [ "${FIX_CLOCK:-1}" = 1 ] && srv=$(wget -qS --spider "$MIRROR/dists/$BSUITE/InRelease" 2>&1 | sed -n 's/^ *Date: //p' | head -1)
 if [ -n "$srv" ]; then
@@ -657,7 +657,7 @@ else
   cp "$ROOTFS/boot/initrd.img-$REL" "$BOOTDIR/gemstone-image-rd-t3-gem-o1.cpio.gz"
 fi
 # lite: no kernel messages on the HDMI console (printing them slows the boot); for debugging
-# delete " quiet loglevel=3" from optargs in BOOT/uEnv.txt (Notepad on Windows is enough)
+# delete " quiet loglevel=3" from optargs in BOOT/uEnv.txt (any plain text editor is enough)
 [ "$SLIM" = 1 ] && QUIET=" quiet loglevel=3" || QUIET=
 cat > "$BOOTDIR/uEnv.txt" <<EOF
 firstboot=1
@@ -678,8 +678,8 @@ rm -f "$IMG"; truncate -s "$IMG_SIZE" "$IMG"
 # FAT driver; the mkfs.vfat defaults (4 KiB clusters, hidden=2048, 255/63) never booted.
 parted -s "$IMG" mklabel msdos mkpart primary fat32 1MiB 129MiB set 1 boot on mkpart primary 129MiB 100%
 LOOP=$(losetup --show -fP "$IMG")
-# the partition nodes (loopNp1/p2) appear asynchronously via udev; under load (or right after a VM
-# restart) mkfs could run before they exist ("unable to open /dev/loopNp1")
+# the partition nodes (loopNp1/p2) appear asynchronously via udev; under load (or right after a
+# build machine restart) mkfs could run before they exist ("unable to open /dev/loopNp1")
 for i in $(seq 30); do [ -b "${LOOP}p1" ] && [ -b "${LOOP}p2" ] && break; partx -u "$LOOP" 2>/dev/null || true; udevadm settle 2>/dev/null || true; sleep 1; done
 [ -b "${LOOP}p1" ] && [ -b "${LOOP}p2" ] || { echo "partitions of $LOOP did not appear"; exit 1; }
 mkfs.vfat -F 32 -s 1 -h 0 -g 16/32 -n BOOT "${LOOP}p1"
@@ -695,7 +695,7 @@ sync
 umount /mnt/gem-root/boot/firmware; umount /mnt/gem-root
 losetup -d "$LOOP"; LOOP=
 log "compress (xz -$XZ_LEVEL)"
-# -T0 = all cores; memory per thread: ~30 MB at -3, ~100 MB at -6, ~700 MB at -9 (too much for a 4 GB VM)
+# -T0 = all cores; memory per thread: ~30 MB at -3, ~100 MB at -6, ~700 MB at -9 (too much for a 4 GB machine)
 xz -T0 -"$XZ_LEVEL" -k -f "$IMG"
 # bare file names, so that "sha256sum -c" works wherever the files are downloaded to
 ( cd "$(dirname "$IMG")" && sha256sum "$(basename "$IMG")" "$(basename "$IMG").xz" ) > "$IMG.sha256"
